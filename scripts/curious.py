@@ -19,6 +19,7 @@ import sys
 import os
 from pathlib import Path
 import json
+import time
 
 
 FLAG_PENDING = 0
@@ -510,6 +511,8 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
 
         if plot_view is not None and (swept > 0 or spawned > 0):
             plot_view.notify_changed()
+
+        time.sleep(0.1)
 
     v("Done")
 
