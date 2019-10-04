@@ -418,10 +418,9 @@ class PlotView2D:
 
 
 def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=False,
-        gif=None, snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, data_folder=".curious",
-        restart=None):
+        gif=None, snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, save=True,
+        load=None):
 
-    data_folder = Path(data_folder)
     stats_start_time = datetime.now()
     status_code = 0
 
@@ -429,9 +428,9 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
         if verbose:
             print(*args, **kwargs)
 
-    if restart is not None:
-        v("Restarting from {} ...".format(restart))
-        with open(restart, 'r') as f:
+    if load is not None:
+        v("Loading from {} ...".format(load))
+        with open(load, 'r') as f:
             guide = CurvatureGuide.from_json(json.load(f))
     else:
         guide = CurvatureGuide.from_bounds(
@@ -518,19 +517,26 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
         v("Saving gif ...")
         plot_view.save_gif(gif)
 
-    if data_folder is not None:
-        if not os.path.exists(data_folder):
+    if save not in (None, False):
+        if save is True:
+            data_folder = Path(".curious")
+            save = data_folder / datetime.now().strftime("%Y-%m-%d-%H:%M:%S:%f.json")
+        else:
+            save = Path(save)
+            data_folder = save.parent
+
+        if not data_folder.exists():
             v("Creating data folder {} ...".format(data_folder))
             os.mkdir(data_folder)
 
-        if not os.path.isdir(data_folder):
+        if not data_folder.is_dir():
             print("Not a folder: {}".format(data_folder), file=sys.stderr)
+            print("Data: {}".format(json.dumps(guide.to_json())))
             status_code = 1
 
         else:
-            fname = data_folder / datetime.now().strftime("%Y-%m-%d-%H:%M:%S:%f.json")
-            v("Dumping into {} ...".format(fname))
-            with open(fname, 'w') as f:
+            v("Dumping into {} ...".format(save))
+            with open(save, 'w') as f:
                 json.dump(guide.to_json(), f)
 
     return status_code
@@ -613,8 +619,11 @@ if __name__ == "__main__":
                         metavar="FLOAT", type=float, default=defaults["nan_threshold"])
     parser.add_argument("--volume-ratio", help="the largest-to-smallest volume ratio to keep",
                         metavar="FLOAT", type=float, default=defaults["volume_ratio"])
-    parser.add_argument("--restart", help="restart a previous calculation", metavar="FILENAME", type=str,
-                        default=defaults["restart"])
+    parser.add_argument("--no-io", help="do not save progress", action="store_true")
+    parser.add_argument("--save", help="save progress to a file (overrides --no-io)", metavar="FILENAME", type=str,
+                        default=defaults["save"])
+    parser.add_argument("--load", help="loads a previous calculation", metavar="FILENAME", type=str,
+                        default=defaults["load"])
 
     options = parser.parse_args()
 
@@ -630,5 +639,6 @@ if __name__ == "__main__":
         snap_threshold=options.snap_threshold,
         nan_threshold=options.nan_threshold,
         volume_ratio=options.volume_ratio,
-        restart=options.restart,
+        save=options.save if options.save is not True else not options.no_io,
+        load=options.load,
     ))

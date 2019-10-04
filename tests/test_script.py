@@ -5,13 +5,15 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import json
+import numpy
 
 
 class TestScript(TestCase):
     def run_curious(self, target, *options, debug=False, ignore_warnings=False):
         this = Path(os.path.dirname(os.path.realpath(__file__)))
         p = subprocess.Popen(
-            (this / ".." / "scripts" / "curious.py", this / "functions" / target,) + tuple(options),
+            (this / ".." / "scripts" / "curious.py", this / "functions" / target, '--no-io') + tuple(options),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         out, err = p.communicate()
@@ -22,6 +24,10 @@ class TestScript(TestCase):
             print(err, file=sys.stderr)
         if p.returncode != 0:
             raise RuntimeError("Curious returned {:d}".format(p.returncode))
+        tmp_folder = Path('.curious')
+        if tmp_folder.exists():
+            raise RuntimeError("Temp folder {} was created".format(tmp_folder))
+
         self.assertEqual(out, "")
         if not ignore_warnings:
             self.assertEqual(err, "")
@@ -58,3 +64,17 @@ class TestScript(TestCase):
         fl = tempfile.mkstemp(suffix=".gif")[1]
         self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--gif', fl, ignore_warnings=True)
         self.assertTrue(os.path.isfile(fl))
+
+    def test_restart(self):
+        fl = tempfile.mkstemp(suffix=".json")[1]
+        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--save', fl)
+        self.assertTrue(os.path.isfile(fl))
+        with open(fl, 'r') as f:
+            data = json.load(f)
+            pts = numpy.array(data["points"])
+            self.assertEqual(pts.shape, (5, 4))
+        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--load', fl, '--save', fl)
+        with open(fl, 'r') as f:
+            data = json.load(f)
+            pts = numpy.array(data["points"])
+            self.assertEqual(pts.shape, (10, 4))
