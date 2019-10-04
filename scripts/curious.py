@@ -192,7 +192,7 @@ class Guide(Iterable):
         center_bcc = self.__center__(simplex_coordinates)
         center_coordinate = center_bcc @ simplex_coordinates
         stub_value = center_bcc @ self.values[self.tri.simplices[simplex], ...]
-        return self.add(*center_coordinate, stub_value)
+        return self.add(*center_coordinate, stub_value, FLAG_RUNNING)
 
     def __iter__(self):
         return self
@@ -514,8 +514,8 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
     v("Done")
 
     if plot_view and gif is not None:
-        v("Saving gif ...")
-        plot_view.save_gif(gif)
+        v("Saving image {} ...".format(gif))
+        plot_view.save_gif(gif, duration=0.5)
 
     if save not in (None, False):
         if save is True:
