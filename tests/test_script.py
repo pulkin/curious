@@ -65,6 +65,11 @@ class TestScript(TestCase):
         self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--gif', fl, ignore_warnings=True)
         self.assertTrue(os.path.isfile(fl))
 
+    def test_tweaks(self):
+        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--snap-threshold", "0")
+        self.run_curious("2_2d_divergence.py", '-1 1, -1 1', '-l', 'eval:5', "--nan-threshold", "0")
+        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--volume-ratio", "1")
+
     def test_restart(self):
         fl = tempfile.mkstemp(suffix=".json")[1]
         self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--save', fl)
