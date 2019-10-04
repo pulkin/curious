@@ -468,6 +468,7 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
     if plot:
         if guide.dims == 2:
             plot_view = PlotView2D(guide, window=True, record_animation=gif is not None)
+            plot_view.notify_changed()
 
         else:
             warn("Cannot plot {:d}D data".format(guide.dims))
