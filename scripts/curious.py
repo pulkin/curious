@@ -2,6 +2,7 @@
 from cutil import simplex_volumes, simplex_volumes_n
 
 import imageio
+import matplotlib
 from matplotlib import pyplot
 from matplotlib.tri import Triangulation
 import numpy
@@ -343,19 +344,35 @@ class PlotView2D:
         if guide.dims != 2:
             raise ValueError("This view is only for 2D guides")
         self.guide = guide
-        self.fig, self.ax = pyplot.subplots(**kwargs)
         self.axes_limits = guide.get_lims()
+        alternative_backends = (
+            # (matplotlib.get_backend(), True),
+            ('agg', False),
+        )
+        for backend, interactive in alternative_backends:
+            try:
+                matplotlib.use(backend)
+                self.fig, self.ax = pyplot.subplots(**kwargs)
+                self.interactive = interactive
+                break
+            except Exception:
+                warn("Failed to use {} as a plotting backend".format(backend))
+        else:
+            raise
         self.color_bar = True
-        pyplot.ion()
-        if window:
-            pyplot.show()
+        self.window = window
+        if self.interactive:
+            pyplot.ion()
+            if self.window:
+                pyplot.show()
 
         if record_animation:
             self.animation_data = []
         else:
             self.animation_data = None
         self.closed_flag = False
-        self.fig.canvas.mpl_connect('close_event', self.__listen_close__)
+        if self.interactive:
+            self.fig.canvas.mpl_connect('close_event', self.__listen_close__)
 
     def __listen_close__(self, event):
         """Listens for closing event."""
@@ -399,8 +416,11 @@ class PlotView2D:
         self.ax.set_xlim(self.axes_limits[0])
         self.ax.set_ylim(self.axes_limits[1])
 
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+        if self.interactive:
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
+        elif self.window:
+            pyplot.savefig("current.png")
 
     def __dump_animation__(self):
         """Dumps animation frame."""
