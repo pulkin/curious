@@ -508,11 +508,13 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
                 for p in new_points:
                     ppp.new(p)
             spawned = len(new_points)
+        else:
+            spawned = 0
 
         if plot_view is not None and (swept > 0 or spawned > 0):
             plot_view.notify_changed()
 
-        time.sleep(0.1)
+        time.sleep(1)
 
     v("Done")
 
