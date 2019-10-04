@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import json
 import time
+import signal
 
 
 FLAG_PENDING = 0
@@ -296,6 +297,7 @@ class PointProcessPool:
         self.processes.append((p, subprocess.Popen(
             (self.target,) + tuple(map("{:.12e}".format, self.guide.coordinates[p])),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)
         )))
 
     def sweep(self):
@@ -424,6 +426,8 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
 
     stats_start_time = datetime.now()
     status_code = 0
+    global ctrl_c_exit_flag
+    ctrl_c_exit_flag = False
 
     def v(*args, **kwargs):
         if verbose:
@@ -478,44 +482,52 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
         plot_view = None
 
     def exit_caught():
-        if plot_view is not None and plot_view.closed_flag:
+        if (plot_view is not None and plot_view.closed_flag) or ctrl_c_exit_flag:
             return True
         return False
 
     while True:
 
-        # Collect data
-        swept = ppp.sweep()
+        try:
+            # Collect data
+            swept = ppp.sweep()
 
-        if exit_caught():
-            if len(ppp.processes) == 0:
-                break
-        else:
-            if not (limit_checker() and fail_checker()):
-                if not fail_checker():
-                    status_code = 1
-                break
+            if exit_caught():
+                if len(ppp.processes) == 0:
+                    break
+            else:
+                if not (limit_checker() and fail_checker()):
+                    if not fail_checker():
+                        status_code = 1
+                    break
 
-        # Spawn new
-        new_to_spawn = depth - len(ppp.processes)
-        if isinstance(limit, int):
-            new_to_spawn = min(new_to_spawn, limit - ppp.completed)
-        if new_to_spawn > 0 and not exit_caught():
-            new_points = guide.suggest(new_to_spawn)
-            if len(new_points) == 0 and ppp.running == 0:
-                raise RuntimeError("No processes are running and no new points have been suggested")
-            if len(new_points) > 0:
-                v("Spawn: {:d} success: {:d} fail: {:d}".format(len(new_points), ppp.succeeded, ppp.failed))
-                for p in new_points:
-                    ppp.new(p)
-            spawned = len(new_points)
-        else:
-            spawned = 0
+            # Spawn new
+            new_to_spawn = depth - len(ppp.processes)
+            if isinstance(limit, int):
+                new_to_spawn = min(new_to_spawn, limit - ppp.completed)
+            if new_to_spawn > 0 and not exit_caught():
+                new_points = guide.suggest(new_to_spawn)
+                if len(new_points) == 0 and ppp.running == 0:
+                    raise RuntimeError("No processes are running and no new points have been suggested")
+                if len(new_points) > 0:
+                    v("Spawn: {:d} success: {:d} fail: {:d}".format(len(new_points), ppp.succeeded, ppp.failed))
+                    for p in new_points:
+                        ppp.new(p)
+                spawned = len(new_points)
+            else:
+                spawned = 0
 
-        if plot_view is not None and (swept > 0 or spawned > 0):
-            plot_view.notify_changed()
+            if plot_view is not None and (swept > 0 or spawned > 0):
+                plot_view.notify_changed()
 
-        time.sleep(1)
+            time.sleep(1)
+
+        except KeyboardInterrupt:
+            if exit_caught():
+                raise
+            else:
+                print("Ctrl-C caught: finalizing ...")
+                ctrl_c_exit_flag = True
 
     v("Done")
 
