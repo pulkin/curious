@@ -200,20 +200,6 @@ class Guide(Iterable):
     def __iter__(self):
         return self
 
-    def suggest(self, n=None):
-        """
-        Suggests one or more points to calculate.
-        Args:
-            n (int): the number of points to calculate;
-
-        Returns:
-            A list of points.
-        """
-        if n is None:
-            return next(self)
-        else:
-            return list(i for _, i in zip(range(n), self))
-
 
 class UniformGuide(Guide):
     def get_simplex_volumes(self):
@@ -269,13 +255,18 @@ class CurvatureGuide(UniformGuide):
 
 class PointProcessPool:
     def __init__(self, target, guide, float_regex=r"([-+]?[0-9]+\.?[0-9]*(?:[eEdD][-+]?[0-9]*)?)|(nan)",
-                 encoding="utf-8"):
+                 encoding="utf-8", limit=None, fail_limit=None):
         self.target = target
         self.guide = guide
         self.compiled_float_regex = re.compile(float_regex)
         self.encoding = encoding
         self.processes = []
         self.__failed__ = self.__succeeded__ = 0
+        self.draining = False
+        self.limit = limit
+        self.fail_limit = fail_limit
+        self.start_time = datetime.now()
+        self.__check_drain__()
 
     @property
     def failed(self):
@@ -294,12 +285,38 @@ class PointProcessPool:
     def completed(self):
         return self.failed + self.succeeded
 
+    @property
+    def projected(self):
+        return self.running + self.completed
+
+    def __check_drain__(self):
+        if not self.draining:
+            if self.fail_limit is not None:
+                if self.failed > self.fail_limit:
+                    self.draining = True
+
+            if self.limit is None:
+                pass
+            elif isinstance(self.limit, int):
+                if self.projected >= self.limit:
+                    self.draining = True
+            elif isinstance(self.limit, timedelta):
+                if datetime.now() > self.start_time + self.limit:
+                    self.draining = True
+            else:
+                raise ValueError("Unknown limit object: {}".format(self.limit))
+
     def new(self, p):
-        self.processes.append((p, subprocess.Popen(
-            (self.target,) + tuple(map("{:.12e}".format, self.guide.coordinates[p])),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)
-        )))
+        if not self.draining:
+            self.processes.append((p, subprocess.Popen(
+                (self.target,) + tuple(map("{:.12e}".format, self.guide.coordinates[p])),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)
+            )))
+            self.__check_drain__()
+            return True
+        else:
+            return False
 
     def sweep(self):
         transaction = []
@@ -332,6 +349,14 @@ class PointProcessPool:
 
         return len(transaction)
 
+    @property
+    def safe_to_exit(self):
+        return len(self.processes) == 0
+
+    @property
+    def exit_now(self):
+        return self.draining and self.safe_to_exit
+
 
 class PlotView2D:
     def __init__(self, guide, window=False, record_animation=False, **kwargs):
@@ -346,7 +371,7 @@ class PlotView2D:
         self.guide = guide
         self.axes_limits = guide.get_lims()
         alternative_backends = (
-            # (matplotlib.get_backend(), True),
+            (matplotlib.get_backend(), True),
             ('agg', False),
         )
         for backend, interactive in alternative_backends:
@@ -444,11 +469,6 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
         gif=None, snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, save=True,
         load=None):
 
-    stats_start_time = datetime.now()
-    status_code = 0
-    global ctrl_c_exit_flag
-    ctrl_c_exit_flag = False
-
     def v(*args, **kwargs):
         if verbose:
             print(*args, **kwargs)
@@ -462,30 +482,7 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
             ranges, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
             volume_ratio=volume_ratio
         )
-    ppp = PointProcessPool(target, guide)
-
-    if limit is None:
-        def limit_checker():
-            return True
-
-    elif isinstance(limit, int):
-        def limit_checker():
-            return ppp.completed < limit
-
-    elif isinstance(limit, timedelta):
-        def limit_checker():
-            return datetime.now() < stats_start_time + limit
-
-    else:
-        raise ValueError("Unknown limit object: {}".format(limit))
-
-    if max_fails is not None:
-        def fail_checker():
-            return ppp.failed <= max_fails
-
-    else:
-        def fail_checker():
-            return True
+    ppp = PointProcessPool(target, guide, limit=limit, fail_limit=max_fails)
 
     v("Hello")
 
@@ -501,53 +498,36 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
     else:
         plot_view = None
 
-    def exit_caught():
-        if (plot_view is not None and plot_view.closed_flag) or ctrl_c_exit_flag:
-            return True
-        return False
-
-    while True:
+    while not ppp.exit_now:
 
         try:
-            # Collect data
+            # Collect the data
             swept = ppp.sweep()
 
-            if exit_caught():
-                if len(ppp.processes) == 0:
-                    break
-            else:
-                if not (limit_checker() and fail_checker()):
-                    if not fail_checker():
-                        status_code = 1
-                    break
-
             # Spawn new
-            new_to_spawn = depth - len(ppp.processes)
-            if isinstance(limit, int):
-                new_to_spawn = min(new_to_spawn, limit - ppp.completed)
-            if new_to_spawn > 0 and not exit_caught():
-                new_points = guide.suggest(new_to_spawn)
-                if len(new_points) == 0 and ppp.running == 0:
-                    raise RuntimeError("No processes are running and no new points have been suggested")
-                if len(new_points) > 0:
-                    v("Spawn: {:d} success: {:d} fail: {:d}".format(len(new_points), ppp.succeeded, ppp.failed))
-                    for p in new_points:
-                        ppp.new(p)
-                spawned = len(new_points)
-            else:
-                spawned = 0
+            spawned = 0
+            for _ in range(depth - len(ppp.processes)):
+                if ppp.draining:
+                    break
+                try:
+                    spawned += ppp.new(next(guide))
+                except StopIteration:
+                    break
 
-            if plot_view is not None and (swept > 0 or spawned > 0):
-                plot_view.notify_changed()
+            if swept or spawned:
+                if plot_view is not None:
+                    plot_view.notify_changed()
+                v("Running: {:d} (+{:d} -{:d}) \ttotal: {:d} ({:d} fails) \t{}".format(
+                    ppp.running, spawned, swept, ppp.completed, ppp.failed, "DRAIN" if ppp.draining else ""))
 
-            time.sleep(1)
+            time.sleep(0.1)
 
         except KeyboardInterrupt:
-            if exit_caught():
+            if ppp.draining:
                 raise
             else:
                 print("Ctrl-C caught: finalizing ...")
-                ctrl_c_exit_flag = True
+                ppp.draining = True
 
     v("Done")
 
@@ -570,14 +550,14 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
         if not data_folder.is_dir():
             print("Not a folder: {}".format(data_folder), file=sys.stderr)
             print("Data: {}".format(json.dumps(guide.to_json())))
-            status_code = 1
+            return 1
 
         else:
             v("Dumping into {} ...".format(save))
             with open(save, 'w') as f:
                 json.dump(guide.to_json(), f)
 
-    return status_code
+    return ppp.failed > ppp.fail_limit
 
 
 if __name__ == "__main__":
