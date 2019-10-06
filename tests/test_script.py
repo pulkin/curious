@@ -63,7 +63,7 @@ class TestScript(TestCase):
 
     def test_gif(self):
         fl = tempfile.mkstemp(suffix=".gif")[1]
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--gif', fl, ignore_warnings=True)
+        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', fl, ignore_warnings=True)
         self.assertTrue(os.path.isfile(fl))
 
     def test_tweaks(self):
