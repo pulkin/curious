@@ -378,9 +378,13 @@ class PointProcessPool:
     def exit_now(self):
         return self.draining and self.safe_to_exit
 
+    def start_drain(self, *args):
+        """Listens for closing event."""
+        self.draining = True
+
 
 class PlotView2D:
-    def __init__(self, guide, window=False, record_animation=False, **kwargs):
+    def __init__(self, guide, window=False, record_animation=False, window_close_listener=None, **kwargs):
         """
         Plots of the 2D sampling.
         Args:
@@ -411,18 +415,13 @@ class PlotView2D:
             pyplot.ion()
             if self.window:
                 pyplot.show()
+            if window_close_listener is not None:
+                self.fig.canvas.mpl_connect('close_event', window_close_listener)
 
         if record_animation:
             self.animation_data = []
         else:
             self.animation_data = None
-        self.closed_flag = False
-        if self.interactive:
-            self.fig.canvas.mpl_connect('close_event', self.__listen_close__)
-
-    def __listen_close__(self, event):
-        """Listens for closing event."""
-        self.closed_flag = True
 
     def update(self):
         """Updates the figure."""
@@ -503,13 +502,15 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
             ranges, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
             volume_ratio=volume_ratio
         )
+
     ppp = PointProcessPool(target, guide, limit=limit, fail_limit=max_fails)
 
     v("Hello")
 
     if plot:
         if guide.dims == 2:
-            plot_view = PlotView2D(guide, window=True, record_animation=gif is not None)
+            plot_view = PlotView2D(guide, window=True, record_animation=gif is not None,
+                                   window_close_listener=ppp.start_drain)
             plot_view.notify_changed()
 
         else:
@@ -548,7 +549,7 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
                 raise
             else:
                 print("Ctrl-C caught: finalizing ...")
-                ppp.draining = True
+                ppp.start_drain()
 
     v("Done")
 
