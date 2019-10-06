@@ -384,7 +384,7 @@ class PointProcessPool:
 
 
 class PlotView2D:
-    def __init__(self, guide, window=False, record_animation=False, window_close_listener=None, **kwargs):
+    def __init__(self, guide, target=None, window_close_listener=None, **kwargs):
         """
         Plots of the 2D sampling.
         Args:
@@ -395,30 +395,19 @@ class PlotView2D:
             raise ValueError("This view is only for 2D guides")
         self.guide = guide
         self.axes_limits = guide.get_lims()
-        alternative_backends = (
-            (matplotlib.get_backend(), True),
-            ('agg', False),
-        )
-        for backend, interactive in alternative_backends:
-            try:
-                matplotlib.use(backend)
-                self.fig, self.ax = pyplot.subplots(**kwargs)
-                self.interactive = interactive
-                break
-            except Exception:
-                warn("Failed to use {} as a plotting backend".format(backend))
-        else:
-            raise
         self.color_bar = True
-        self.window = window
-        if self.interactive:
+        self.target = target
+        if target:
+            matplotlib.use('agg')
+        self.fig, self.ax = pyplot.subplots(**kwargs)
+        if self.target is None:
             pyplot.ion()
-            if self.window:
-                pyplot.show()
+            pyplot.show()
             if window_close_listener is not None:
                 self.fig.canvas.mpl_connect('close_event', window_close_listener)
 
-        if record_animation:
+        self.record_animation = self.target is not None and self.target.endswith(".gif")
+        if self.record_animation:
             self.animation_data = []
         else:
             self.animation_data = None
@@ -461,21 +450,21 @@ class PlotView2D:
         self.ax.set_xlim(self.axes_limits[0])
         self.ax.set_ylim(self.axes_limits[1])
 
-        if self.interactive:
-            self.fig.canvas.draw()
+        self.fig.canvas.draw()
+        if self.target is None:
             self.fig.canvas.flush_events()
-        elif self.window:
-            pyplot.savefig("current.png")
+        else:
+            if self.record_animation:
+                if len(self.animation_data) > 0:
+                    imageio.mimsave(self.target, self.animation_data)
+            else:
+                pyplot.savefig(self.target)
 
     def __dump_animation__(self):
         """Dumps animation frame."""
         data = numpy.frombuffer(self.fig.canvas.tostring_rgb(), dtype='uint8')
         data = data.reshape(self.fig.canvas.get_width_height()[::-1] + (3,))
         self.animation_data.append(data)
-
-    def save_gif(self, name, **kwargs):
-        """Saves the GIF animation."""
-        imageio.mimsave(name, self.animation_data, **kwargs)
 
     def notify_changed(self):
         """Updates if possible."""
@@ -486,8 +475,7 @@ class PlotView2D:
 
 
 def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=False,
-        gif=None, snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, save=True,
-        load=None):
+        snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, save=True, load=None):
 
     def v(*args, **kwargs):
         if verbose:
@@ -507,10 +495,9 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
 
     v("Hello")
 
-    if plot:
+    if plot is not False:
         if guide.dims == 2:
-            plot_view = PlotView2D(guide, window=True, record_animation=gif is not None,
-                                   window_close_listener=ppp.start_drain)
+            plot_view = PlotView2D(guide, target=plot, window_close_listener=ppp.start_drain)
             plot_view.notify_changed()
 
         else:
@@ -552,10 +539,6 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
                 ppp.start_drain()
 
     v("Done")
-
-    if plot_view and gif is not None:
-        v("Saving image {} ...".format(gif))
-        plot_view.save_gif(gif, duration=0.5)
 
     if save not in (None, False):
         if save is True:
@@ -650,9 +633,8 @@ if __name__ == "__main__":
                                               "'time:DD:HH:MM:SS' (time limit), "
                                               "'eval:N' (the total number of evaluations)",
                         metavar="LIMIT", type=str, default=l2s(defaults["limit"]))
-    parser.add_argument("-p", "--plot", help="display a window with status plot", action="store_true")
-    parser.add_argument("--gif", help="Save visualization with all steps into GIF file", metavar="FILENAME", type=str,
-                        default=defaults["gif"])
+    parser.add_argument("--plot", help="make a status plot", metavar="[FILENAME]", type=str, nargs="?",
+                        default=defaults["plot"])
     parser.add_argument("--snap-threshold", help="a threshold to snap points to faces", metavar="FLOAT", type=float,
                         default=defaults["snap_threshold"])
     parser.add_argument("--nan-threshold", help="a critical ratio of nans to fallback to uniform sampling",
@@ -674,8 +656,7 @@ if __name__ == "__main__":
         depth=options.depth,
         max_fails=options.max_fails,
         limit=s2l(options.limit),
-        plot=options.plot or options.gif is not None,
-        gif=options.gif,
+        plot=options.plot,
         snap_threshold=options.snap_threshold,
         nan_threshold=options.nan_threshold,
         volume_ratio=options.volume_ratio,
