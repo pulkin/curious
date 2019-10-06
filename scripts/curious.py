@@ -30,13 +30,17 @@ FLAG_DONE = 2
 
 
 class Guide(Iterable):
-    def __init__(self, dims, points=None, snap_threshold=None, default_value=0, default_flag=FLAG_PENDING):
+    def __init__(self, dims, points=None, snap_threshold=None, default_value=0, default_flag=FLAG_PENDING,
+                 priority_tolerance=None):
         """
         Guides the sampling.
         Args:
             dims (int): the dimensionality;
             points (Iterable): data points;
             snap_threshold (float): a threshold to snap to triangle/simplex faces;
+            default_value (float): default value to assign to input points;
+            default_flag (float): default flag to assign to input points;
+            priority_tolerance (float): expected tolerance of priority values;
         """
         self.dims = dims
         if points is None:
@@ -48,6 +52,10 @@ class Guide(Iterable):
             self.flags[:] = default_flag
             self.data[:, :points.shape[1]] = points
         self.snap_threshold = snap_threshold
+        if priority_tolerance is None:
+            self.priority_tolerance = 1e-9
+        else:
+            self.priority_tolerance = priority_tolerance
         self.tri = self.maybe_triangulate()
 
     @classmethod
@@ -173,6 +181,9 @@ class Guide(Iterable):
             mask /= mask.sum()
         return mask
 
+    def __choose_from_alternatives__(self, alternatives):
+        raise NotImplementedError
+
     def __next__(self):
         """Picks a next point index to compute based on priority."""
         # First, preset points
@@ -187,10 +198,12 @@ class Guide(Iterable):
         # Second, nans
         nans = numpy.where(numpy.isnan(priority))[0]
         if len(nans) > 0:
-            simplex = nans[0]
+            simplex = self.__choose_from_alternatives__(nans)
         else:
             # Largest volumes otherwise
-            simplex = numpy.argmax(priority)
+            max_priority = numpy.max(priority)
+            simplex = self.__choose_from_alternatives__(
+                numpy.where(priority >= max_priority - self.priority_tolerance)[0])
         simplex_coordinates = self.tri.points[self.tri.simplices[simplex], :]
         center_bcc = self.__center__(simplex_coordinates)
         center_coordinate = center_bcc @ simplex_coordinates
@@ -202,6 +215,9 @@ class Guide(Iterable):
 
 
 class UniformGuide(Guide):
+    def __choose_from_alternatives__(self, alternatives):
+        return alternatives[0]
+
     def get_simplex_volumes(self):
         """Calculates simplexes' volumes"""
         return simplex_volumes(self.tri.points, self.tri.simplices)
@@ -212,7 +228,8 @@ class UniformGuide(Guide):
 
 
 class CurvatureGuide(UniformGuide):
-    def __init__(self, dims, points, snap_threshold=None, nan_threshold=None, volume_ratio=None):
+    def __init__(self, dims, points, snap_threshold=None, nan_threshold=None, volume_ratio=None,
+                 priority_tolerance=None):
         """
         Guides the sampling.
         Args:
@@ -222,8 +239,9 @@ class CurvatureGuide(UniformGuide):
             nan_threshold (float): a critical value of NaNs to fallback to uniform sampling;
             volume_ratio (float): the ratio between the largest volume present and the
             smallest volume to sample;
+            priority_tolerance (float): expected tolerance of priority values;
         """
-        super().__init__(dims, points, snap_threshold)
+        super().__init__(dims, points, snap_threshold, priority_tolerance=priority_tolerance)
         self.nan_threshold = nan_threshold
         self.volume_ratio = volume_ratio
 
@@ -232,6 +250,9 @@ class CurvatureGuide(UniformGuide):
             nan_threshold=self.nan_threshold,
             volume_ratio=self.volume_ratio,
         )}
+
+    def __choose_from_alternatives__(self, alternatives):
+        return alternatives[numpy.argmax(self.get_simplex_volumes()[alternatives])]
 
     def get_curvature_measure(self):
         """Calculates the measure of curvature"""
