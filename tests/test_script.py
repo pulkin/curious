@@ -28,9 +28,10 @@ class TestScript(TestCase):
         if tmp_folder.exists():
             raise RuntimeError("Temp folder {} was created".format(tmp_folder))
 
-        self.assertEqual(out, "")
-        if not ignore_warnings:
-            self.assertEqual(err, "")
+        if not self.debug:
+            self.assertEqual(out, "")
+            if not ignore_warnings:
+                self.assertEqual(err, "")
 
     def test_lim_case_0(self):
         self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5')
