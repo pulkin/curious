@@ -50,6 +50,16 @@ static char cutil__validate(PyArrayObject *points, PyArrayObject *simplexes, npy
         return 0;
     }
 
+    // Type
+    if (PyArray_TYPE(points) != NPY_DOUBLE) {
+        PyErr_Format(PyExc_ValueError, "The type of 'points' array is not double (type code: %d, expected: %d))", PyArray_TYPE(points), NPY_DOUBLE);
+        return 0;
+    }
+    if (PyArray_TYPE(simplexes) != NPY_INT) {
+        PyErr_Format(PyExc_ValueError, "The type of 'simplexes' array is not int32 (type code: %d, expected: %d))", PyArray_TYPE(simplexes), NPY_INT);
+        return 0;
+    }
+
     npy_int dims = PyArray_DIM(points, 1);
     npy_int dims_s = PyArray_DIM(simplexes, 1);
     npy_int ns = PyArray_DIM(simplexes, 0);
@@ -72,6 +82,7 @@ static char cutil__validate(PyArrayObject *points, PyArrayObject *simplexes, npy
     }
 
     if (neighbours != NULL && neighbours_ptr != NULL) {
+        // Alignment
         if (PyArray_NDIM(neighbours) != 1) {
             PyErr_Format(PyExc_ValueError, "A 1D array expected for 'neighbours', found: %dD", PyArray_NDIM(neighbours));
             return 0;
@@ -84,6 +95,17 @@ static char cutil__validate(PyArrayObject *points, PyArrayObject *simplexes, npy
             PyErr_Format(PyExc_ValueError, "The length of 'neighbours_ptr', is expected to be %d; found: %d", np+1, PyArray_DIM(neighbours_ptr, 0));
             return 0;
         }
+
+        // Type
+        if (PyArray_TYPE(neighbours) != NPY_INT) {
+            PyErr_Format(PyExc_ValueError, "The type of 'neighbours' array is not int32 (type code: %d, expected: %d))", PyArray_TYPE(neighbours), NPY_INT);
+            return 0;
+        }
+        if (PyArray_TYPE(neighbours_ptr) != NPY_INT) {
+            PyErr_Format(PyExc_ValueError, "The type of 'neighbours_ptr' array is not int32 (type code: %d, expected: %d))", PyArray_TYPE(neighbours_ptr), NPY_INT);
+            return 0;
+        }
+
 
         npy_int nn = PyArray_DIM(neighbours, 0);
 
