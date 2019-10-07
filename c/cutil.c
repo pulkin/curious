@@ -269,6 +269,7 @@ static PyObject* cutil_simplex_volumes_n(PyObject *dummy, PyObject *args) {
     if (!cutil__validate(points, simplexes, 1, neighbours_ptr, neighbours)) return NULL;
 
     npy_int dims = PyArray_DIM(points, 1);
+    npy_int np = PyArray_DIM(points, 0);
     npy_int ns = PyArray_DIM(simplexes, 0);
 
     PyObject *output;
@@ -282,13 +283,16 @@ static PyObject* cutil_simplex_volumes_n(PyObject *dummy, PyObject *args) {
     npy_double dmatrix[dims * dims];
 
     for (npy_int i=0; i<ns; i++) {  // Iter over simplexes
+        uint8_t neighbors_set[np];
+        memset(neighbors_set, 0, sizeof(neighbors_set));
         for (npy_int j=0; j<dims; j++) {  // Iter over simplex points
             npy_int simplex_point_i = ((npy_int*)PyArray_GETPTR2(simplexes, i, j))[0];
             npy_int ptr_from = ((npy_int*)PyArray_GETPTR1(neighbours_ptr, simplex_point_i))[0];
             npy_int ptr_to = ((npy_int*)PyArray_GETPTR1(neighbours_ptr, simplex_point_i+1))[0];
             for (npy_int k=ptr_from; k<ptr_to; k++) {  // Iter over nb pts
                 npy_int neighbour_point_i = ((npy_int*)PyArray_GETPTR1(neighbours, k))[0];
-                if (neighbour_point_i != -1) {
+                if (neighbour_point_i != -1 && !neighbors_set[neighbour_point_i]) {
+                    neighbors_set[neighbour_point_i] = 1;
                     if (!cutil__get_dm(points, simplexes, i, neighbour_point_i, dmatrix)) return NULL;
                     npy_double vol = cutil__volume(dmatrix, dims);
                     if (vol < 0) return NULL;
