@@ -42,6 +42,9 @@ class TestScript(TestCase):
     def test_lim_case_2(self):
         self.run_curious("2_2d_divergence.py", '-1 1, -1 1', '-l', 'eval:5')
 
+    def test_lim_case_4(self):
+        self.run_curious("4_1d_gaussian.py", '-1 1', '-l', 'eval:5')
+
     def test_lim_eval(self):
         self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:30')
 
