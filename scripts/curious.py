@@ -29,6 +29,26 @@ FLAG_RUNNING = 1
 FLAG_DONE = 2
 
 
+class DSTub1D:
+    def __init__(self, coordinates):
+        # Points
+        self.points = coordinates
+
+        # Simplices
+        order = numpy.argsort(coordinates[:, 0]).astype(numpy.int32)
+        self.simplices = numpy.concatenate((order[:-1, numpy.newaxis], order[1:,numpy.newaxis]), axis=-1)
+
+        # Neighbours
+        left_right = numpy.full(len(order) + 2, -1, dtype=numpy.int32)
+        left_right[1:-1] = order
+        order_inv = numpy.argsort(order)
+        left = left_right[:-2][order_inv]
+        right = left_right[2:][order_inv]
+        neighbours = numpy.concatenate((right[:, numpy.newaxis], left[:, numpy.newaxis]), axis=-1).reshape(-1)
+        neighbours_ptr = numpy.arange(0, len(neighbours) + 2, 2, dtype=numpy.int32)
+        self.vertex_neighbor_vertices = neighbours_ptr, neighbours
+
+
 class Guide(Iterable):
     def __init__(self, dims, points=None, snap_threshold=None, default_value=0, default_flag=FLAG_PENDING,
                  priority_tolerance=None):
@@ -125,7 +145,10 @@ class Guide(Iterable):
     def maybe_triangulate(self):
         """Computes a new triangulation"""
         if len(self.data) >= 2 ** self.dims:
-            self.tri = Delaunay(self.coordinates, qhull_options='Qz')
+            if self.dims == 1:
+                self.tri = DSTub1D(self.coordinates)
+            else:
+                self.tri = Delaunay(self.coordinates, qhull_options='Qz')
         else:
             self.tri = None
         return self.tri
