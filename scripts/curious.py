@@ -5,6 +5,7 @@ import imageio
 import matplotlib
 from matplotlib import pyplot
 from matplotlib.tri import Triangulation
+from matplotlib.collections import LineCollection
 import numpy
 from scipy.spatial import Delaunay
 
@@ -406,19 +407,18 @@ class PointProcessPool:
         self.draining = True
 
 
-class PlotView2D:
+class PlotView1D:
     def __init__(self, guide, target=None, window_close_listener=None, **kwargs):
         """
-        Plots of the 2D sampling.
+        Plots 1D sampling.
         Args:
             guide (Guide): the guide to view;
             kwargs: keyword arguments to `pyplot.subplots`;
         """
-        if guide.dims != 2:
-            raise ValueError("This view is only for 2D guides")
+        if guide.dims != 1:
+            raise ValueError("This view is only for 1D guides")
         self.guide = guide
         self.axes_limits = guide.get_lims()
-        self.color_bar = True
         self.target = target
         if target:
             matplotlib.use('agg')
@@ -435,43 +435,36 @@ class PlotView2D:
         else:
             self.animation_data = None
 
-    def update(self):
-        """Updates the figure."""
+    def __plot_main__(self):
         tri = self.guide.tri
-        values = self.guide.values
-        if tri is None:
-            raise ValueError("Triangulation is None")
+        p = tri.points.squeeze()[tri.simplices]
+        v = self.guide.values[tri.simplices]
+        lc = LineCollection(numpy.concatenate((p[..., numpy.newaxis], v[..., numpy.newaxis]), axis=-1))
+        pyplot.gca().add_collection(lc)
 
-        self.ax.clear()
-        color_plot = self.ax.tripcolor(
-            Triangulation(*tri.points.T, triangles=tri.simplices),
-            values,
-            vmin=numpy.nanmin(values),
-            vmax=numpy.nanmax(values),
-        )
-
-        if self.color_bar is True:
-            self.color_bar = pyplot.colorbar(color_plot)
-        elif self.color_bar in (False, None):
-            pass
-        else:
-            self.color_bar.on_mappable_changed(color_plot)
-
-        running = self.guide.coordinates[self.guide.m_running, :]
+        running = self.guide.data[self.guide.m_running, :-1]
         if len(running) > 0:
-            self.ax.scatter(*running.T, facecolors='none', edgecolors="white")
+            self.ax.scatter(*running.T, facecolors='none', edgecolors="black")
 
-        done = self.guide.coordinates[self.guide.m_done_numeric, :]
+        done = self.guide.data[self.guide.m_done_numeric, :-1]
         if len(done) > 0:
-            self.ax.scatter(*done.T, color="white", s=3)
+            self.ax.scatter(*done.T, color="black", s=3)
 
-        nan = self.guide.coordinates[self.guide.m_done_nan, :]
+        nan = self.guide.data[self.guide.m_done_nan, :-1]
         if len(nan) > 0:
             self.ax.scatter(*nan.T, s=10, color="#FF5555", marker="x")
 
-        self.ax.set_title("Data: {:d} points".format(len(values)))
         self.ax.set_xlim(self.axes_limits[0])
-        self.ax.set_ylim(self.axes_limits[1])
+
+    def update(self):
+        """Updates the figure."""
+        if self.guide.tri is None:
+            raise ValueError("Triangulation is None")
+
+        self.ax.clear()
+        self.__plot_main__()
+
+        self.ax.set_title("Data: {:d} points".format(len(self.guide.values)))
 
         self.fig.canvas.draw()
         if self.target is None:
@@ -497,6 +490,66 @@ class PlotView2D:
                 self.__dump_animation__()
 
 
+class PlotView2D(PlotView1D):
+    def __init__(self, guide, target=None, window_close_listener=None, **kwargs):
+        """
+        Plots 2D sampling.
+        Args:
+            guide (Guide): the guide to view;
+            kwargs: keyword arguments to `pyplot.subplots`;
+        """
+        if guide.dims != 2:
+            raise ValueError("This view is only for 2D guides")
+        self.guide = guide
+        self.axes_limits = guide.get_lims()
+        self.color_bar = True
+        self.target = target
+        if target:
+            matplotlib.use('agg')
+        self.fig, self.ax = pyplot.subplots(**kwargs)
+        if self.target is None:
+            pyplot.ion()
+            pyplot.show()
+            if window_close_listener is not None:
+                self.fig.canvas.mpl_connect('close_event', window_close_listener)
+
+        self.record_animation = self.target is not None and self.target.endswith(".gif")
+        if self.record_animation:
+            self.animation_data = []
+        else:
+            self.animation_data = None
+
+    def __plot_main__(self):
+        color_plot = self.ax.tripcolor(
+            Triangulation(*self.guide.tri.points.T, triangles=self.guide.tri.simplices),
+            self.guide.values,
+            vmin=numpy.nanmin(self.guide.values),
+            vmax=numpy.nanmax(self.guide.values),
+        )
+
+        if self.color_bar is True:
+            self.color_bar = pyplot.colorbar(color_plot)
+        elif self.color_bar in (False, None):
+            pass
+        else:
+            self.color_bar.on_mappable_changed(color_plot)
+
+        running = self.guide.coordinates[self.guide.m_running, :]
+        if len(running) > 0:
+            self.ax.scatter(*running.T, facecolors='none', edgecolors="white")
+
+        done = self.guide.coordinates[self.guide.m_done_numeric, :]
+        if len(done) > 0:
+            self.ax.scatter(*done.T, color="white", s=3)
+
+        nan = self.guide.coordinates[self.guide.m_done_nan, :]
+        if len(nan) > 0:
+            self.ax.scatter(*nan.T, s=10, color="#FF5555", marker="x")
+
+        self.ax.set_xlim(self.axes_limits[0])
+        self.ax.set_ylim(self.axes_limits[1])
+
+
 def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=False,
         snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, save=True, load=None):
 
@@ -519,8 +572,8 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
     v("Hello")
 
     if plot is not False:
-        if guide.dims == 2:
-            plot_view = PlotView2D(guide, target=plot, window_close_listener=ppp.start_drain)
+        if 1 <= guide.dims <= 2:
+            plot_view = {1: PlotView1D, 2: PlotView2D}[guide.dims](guide, target=plot, window_close_listener=ppp.start_drain)
             plot_view.notify_changed()
 
         else:
