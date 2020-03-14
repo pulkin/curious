@@ -87,3 +87,12 @@ class TestScript(TestCase):
             data = json.load(f)
             pts = numpy.array(data["points"])
             self.assertEqual(pts.shape, (10, 4))
+
+    def test_4d(self):
+        fl = tempfile.mkstemp(suffix=".json")[1]
+        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1, -1 1, -1 1', '-l', 'eval:16', '--save', fl)
+        self.assertTrue(os.path.isfile(fl))
+        with open(fl, 'r') as f:
+            data = json.load(f)
+            pts = numpy.array(data["points"])
+            self.assertEqual(pts.shape, (16, 6))
