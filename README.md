@@ -1,3 +1,5 @@
+[![Build Status](https://dev.azure.com/gpulkin/curious/_apis/build/status/pulkin.curious?branchName=master)](https://dev.azure.com/gpulkin/curious/_build/latest?definitionId=1&branchName=master)
+
 curious -- parallel function sampling
 =====================================
 
