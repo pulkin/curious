@@ -25,7 +25,7 @@ stages:
       displayName: 'Test library'
 
     - script: |
-        python3 setup.py install
+        sudo python3 setup.py install
         python3 -m unittest tests/test_script.py
       displayName: 'Test install'
 
