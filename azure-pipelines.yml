@@ -16,7 +16,11 @@ stages:
     - script: python3 -m pip install -r requirements.txt
       displayName: 'Install requirements'
 
+    - script: python3 setup.py build
+      displayName: 'Build'
+
     - script: |
+        ln -s build/lib*/cutil.cpython*.so .
         python3 -m unittest tests/test_volumes.py
         python3 -m unittest tests/test_script.py
       displayName: 'Test'
