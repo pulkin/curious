@@ -1,0 +1,23 @@
+stages:
+- stage: build
+  displayName: 'Build and test'
+  jobs:
+  - job: build_ubuntu_latest
+    displayName: 'Ubuntu build'
+    pool:
+      vmImage: 'ubuntu-latest'
+  
+    steps:
+    - checkout: self
+
+    - script: python -m pip install --upgrade pip setuptools wheel
+      displayName: 'Install pip'
+
+    - script: pip install -r requirements.txt
+      displayName: 'Install requirements'
+
+    - script: |
+        python -m unittest tests/test_volumes.py
+        python -m unittest tests/test_script.py
+      displayName: 'Test'
+
