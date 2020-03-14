@@ -156,15 +156,37 @@ static char cutil__get_dm(PyArrayObject *points, PyArrayObject *simplexes, npy_i
 }
 
 
-static npy_double cutil__volume(npy_double* points, npy_int dims) {
+static npy_double cutil__det_(npy_double* points, npy_int dims, npy_int row, uint8_t* cols) {
+    // Recursion exit
+    if (row == dims - 1) {
+        for (npy_int col=0; col<dims; col++)
+            if (cols[col]) return points[dims * row + col];
+        PyErr_Format(PyExc_RuntimeError, "Empty row");
+        return 0;
+    } else {
+        npy_double result = 0;
+        npy_int e = 1;
+        for (npy_int col=0; col<dims; col++)
+            if (cols[col]) {
+                cols[col] = 0;
+                result += e * cutil__det_(points, dims, row + 1, cols) * points[dims * row + col];
+                e *= -1;
+                cols[col] = 1;
+            }
+        return result / (dims - row);
+    }
+}
+
+
+static npy_double cutil__det(npy_double* points, npy_int dims) {
     /* Volume. */
     if (dims == 1) {
-        return fabs(points[0]);
+        return points[0];
     }
     else if (dims == 2) {
         /* 0 1
            2 3 */
-        return fabs(points[0] * points[3] - points[1] * points[2]) / 2;
+        return (points[0] * points[3] - points[1] * points[2]) / 2;
     } else if (dims == 3) {
         /* 0 1 2
            3 4 5
@@ -172,11 +194,17 @@ static npy_double cutil__volume(npy_double* points, npy_int dims) {
         npy_double d1 = points[4] * points[8] - points[5] * points[7];
         npy_double d2 = points[3] * points[8] - points[5] * points[6];
         npy_double d3 = points[3] * points[7] - points[4] * points[6];
-        return fabs(points[0] * d1 - points[1] * d2 + points[2] * d3) / 6;
+        return (points[0] * d1 - points[1] * d2 + points[2] * d3) / 6;
     } else {
-        PyErr_Format(PyExc_ValueError, "Volume not implemented for %d-dimensional data", dims);
-        return -1;
+        uint8_t cols[dims];
+        memset(cols, 1, dims);
+        return cutil__det_(points, dims, 0, cols);
     }
+}
+
+
+static npy_double cutil__volume(npy_double* points, npy_int dims) {
+    return fabs(cutil__det(points, dims));
 }
 
 
