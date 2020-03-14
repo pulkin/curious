@@ -9,5 +9,4 @@ setup(
     description='Feature-driven function sampling',
     ext_modules=[Extension('cutil', sources=['c/cutil.c'], include_dirs=[numpy.get_include()])],
     scripts=['scripts/curious.py'],
-    install_requires=['numpy', 'scipy', 'matplotlib', 'imageio'],
 )
