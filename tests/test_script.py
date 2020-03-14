@@ -13,7 +13,7 @@ class TestScript(TestCase):
     def run_curious(self, target, *options, debug=False, ignore_warnings=False):
         this = Path(os.path.dirname(os.path.realpath(__file__)))
         p = subprocess.Popen(
-            (this / ".." / "scripts" / "curious.py", this / "functions" / target, '--no-io') + tuple(options),
+            ("curious.py", this / "functions" / target, '--no-io') + tuple(options),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         out, err = p.communicate()
