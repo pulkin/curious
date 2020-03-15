@@ -47,7 +47,18 @@ class TestScript(TestCase):
             return json.load(f)
 
     def test_lim_case_0(self):
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5')
+        _x1 = 1. / abs(2.**.5 - 0.5 - 0.1j) ** 2 + 1
+        _x2 = 1. / abs(2.**.5 / 3 - 0.5 - 0.1j) ** 2 + 1
+        data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5')
+        self.assertEqual(data["dims"], 2)
+        numpy.testing.assert_almost_equal(data["points"], [
+            [-1.0, -1.0, _x1, 2.0], [-1.0, 1.0, _x1, 2.0],
+            [1.0, -1.0, _x1, 2.0], [1.0, 1.0, _x1, 2.0],
+            [-1./3, 1./3, _x2, 2.0],
+        ])
+        self.assertEqual(data["snap_threshold"], 0.5)
+        self.assertEqual(data["nan_threshold"], 0.5)
+        self.assertEqual(data["volume_ratio"], 10)
 
     def test_lim_case_1(self):
         self.run_curious("1_2d_step.py", '-1 1, -1 1', '-l', 'eval:5')
