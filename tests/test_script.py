@@ -34,7 +34,7 @@ class TestScript(TestCase):
                 self.assertEqual(err, "")
 
     def test_lim_case_0(self):
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5')
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5')
 
     def test_lim_case_1(self):
         self.run_curious("1_2d_step.py", '-1 1, -1 1', '-l', 'eval:5')
@@ -46,13 +46,13 @@ class TestScript(TestCase):
         self.run_curious("4_1d_gaussian.py", '-1 1', '-l', 'eval:5')
 
     def test_lim_eval(self):
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:30')
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:30')
 
     def test_lim_time(self):
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'time:00:00:05')
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'time:00:00:05')
 
     def test_depth(self):
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--depth", "2")
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--depth", "2")
 
     def test_max_fails(self):
         with self.assertRaises(RuntimeError):
@@ -62,27 +62,27 @@ class TestScript(TestCase):
             self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--max-fails", "4")
 
     def test_plot(self):
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', ignore_warnings=True)
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', ignore_warnings=True)
 
     def test_gif(self):
         fl = tempfile.mkstemp(suffix=".gif")[1]
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', fl, ignore_warnings=True)
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', fl, ignore_warnings=True)
         self.assertTrue(os.path.isfile(fl))
 
     def test_tweaks(self):
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--snap-threshold", "0")
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--snap-threshold", "0")
         self.run_curious("2_2d_divergence.py", '-1 1, -1 1', '-l', 'eval:5', "--nan-threshold", "0")
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--volume-ratio", "1")
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--volume-ratio", "1")
 
     def test_restart(self):
         fl = tempfile.mkstemp(suffix=".json")[1]
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--save', fl)
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--save', fl)
         self.assertTrue(os.path.isfile(fl))
         with open(fl, 'r') as f:
             data = json.load(f)
             pts = numpy.array(data["points"])
             self.assertEqual(pts.shape, (5, 4))
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--load', fl, '--save', fl)
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--load', fl, '--save', fl)
         with open(fl, 'r') as f:
             data = json.load(f)
             pts = numpy.array(data["points"])
@@ -90,7 +90,7 @@ class TestScript(TestCase):
 
     def test_4d(self):
         fl = tempfile.mkstemp(suffix=".json")[1]
-        self.run_curious("0_2d_circle_feature.py", '-1 1, -1 1, -1 1, -1 1', '-l', 'eval:16', '--save', fl)
+        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1, -1 1, -1 1', '-l', 'eval:16', '--save', fl)
         self.assertTrue(os.path.isfile(fl))
         with open(fl, 'r') as f:
             data = json.load(f)
