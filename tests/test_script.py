@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import json
 import numpy
+import time
+import imageio
 
 
 class TestScript(TestCase):
@@ -47,13 +49,13 @@ class TestScript(TestCase):
             return json.load(f)
 
     def test_lim_case_0(self):
-        _x1 = 1. / abs(2.**.5 - 0.5 - 0.1j) ** 2 + 1
-        _x2 = 1. / abs(2.**.5 / 3 - 0.5 - 0.1j) ** 2 + 1
+        _x1 = 1. / abs(2.**.5 - 0.5 - 0.1j) ** 2
+        _x2 = 1. / abs(2.**.5 / 3 - 0.5 - 0.1j) ** 2 - 1./9
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5')
         self.assertEqual(data["dims"], 2)
         numpy.testing.assert_almost_equal(data["points"], [
-            [-1.0, -1.0, _x1, 2.0], [-1.0, 1.0, _x1, 2.0],
-            [1.0, -1.0, _x1, 2.0], [1.0, 1.0, _x1, 2.0],
+            [-1.0, -1.0, _x1 + 1, 2.0], [-1.0, 1.0, _x1 - 1, 2.0],
+            [1.0, -1.0, _x1 - 1, 2.0], [1.0, 1.0, _x1 + 1, 2.0],
             [-1./3, 1./3, _x2, 2.0],
         ])
         self.assertEqual(data["snap_threshold"], 0.5)
@@ -61,54 +63,116 @@ class TestScript(TestCase):
         self.assertEqual(data["volume_ratio"], 10)
 
     def test_lim_case_1(self):
-        self.run_curious("1_2d_step.py", '-1 1, -1 1', '-l', 'eval:5')
+        data = self.run_curious("1_2d_step.py", '-1 1, -1 1', '-l', 'eval:5')
+        self.assertEqual(data["dims"], 2)
+        numpy.testing.assert_almost_equal(data["points"], [
+            [-1.0, -1.0, -1.0, 2.0], [-1.0, 1.0, 1.0, 2.0],
+            [1.0, -1.0, -1.0, 2.0], [1.0, 1.0, 1.0, 2.0],
+            [-1./3, 1./3, -3.**.5 / 2 + 1, 2.0],
+        ])
+        self.assertEqual(data["snap_threshold"], 0.5)
+        self.assertEqual(data["nan_threshold"], 0.5)
+        self.assertEqual(data["volume_ratio"], 10)
 
     def test_lim_case_2(self):
-        self.run_curious("2_2d_divergence.py", '-1 1, -1 1', '-l', 'eval:5')
+        data = self.run_curious("2_2d_divergence.py", '-1 1, -1 1', '-l', 'eval:5')
+        self.assertEqual(data["dims"], 2)
+        numpy.testing.assert_almost_equal(data["points"], [
+            [-1.0, -1.0, -2.0, 2.0], [-1.0, 1.0, 0.0, 2.0],
+            [1.0, -1.0, 0.0, 2.0], [1.0, 1.0, 2.0, 2.0],
+            [-1./3, 1./3, 0.0, 2.0],
+        ])
+        self.assertEqual(data["snap_threshold"], 0.5)
+        self.assertEqual(data["nan_threshold"], 0.5)
+        self.assertEqual(data["volume_ratio"], 10)
 
     def test_lim_case_4(self):
-        self.run_curious("4_1d_gaussian.py", '-1 1', '-l', 'eval:5')
+        data = self.run_curious("4_1d_gaussian.py", '0 1', '-l', 'eval:5')
+        self.assertEqual(data["dims"], 1)
+        numpy.testing.assert_almost_equal(data["points"], [
+            [0.0, 1.0, 2.0], [1.0, numpy.exp(-1), 2.0],
+            [0.5, numpy.exp(-0.25), 2.0], [0.25, numpy.exp(-1./16), 2.0],
+            [0.375, numpy.exp(-0.375 ** 2), 2.0],
+        ])
+        self.assertEqual(data["snap_threshold"], 0.5)
+        self.assertEqual(data["nan_threshold"], 0.5)
+        self.assertEqual(data["volume_ratio"], 10)
 
     def test_lim_eval(self):
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:30')
+        data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:30')
+        self.assertEqual(data["dims"], 2)
+        self.assertEqual(numpy.array(data["points"]).shape, (30, 4))
+        self.assertEqual(data["snap_threshold"], 0.5)
+        self.assertEqual(data["nan_threshold"], 0.5)
+        self.assertEqual(data["volume_ratio"], 10)
 
     def test_lim_time(self):
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'time:00:00:05')
+        t = time.time()
+        data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'time:00:00:05')
+        t = time.time() - t
+        self.assertEqual(data["dims"], 2)
+        self.assertEqual(numpy.array(data["points"]).shape[1], 4)
+        self.assertEqual(data["snap_threshold"], 0.5)
+        self.assertEqual(data["nan_threshold"], 0.5)
+        self.assertEqual(data["volume_ratio"], 10)
+        self.assertLess(t, 7)
+        self.assertGreater(t, 5)
 
     def test_depth(self):
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--depth", "2")
+        _x1 = 1. / abs(2.**.5 - 0.5 - 0.1j) ** 2
+        _x2 = 1. / abs(2.**.5 / 3 - 0.5 - 0.1j) ** 2 - 1./9
+        _x3 = 1. / abs(26.**.5 / 9 - 0.5 - 0.1j) ** 2 + 5./81
+        data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:6', "--depth", "2")
+        self.assertEqual(data["dims"], 2)
+        numpy.testing.assert_almost_equal(data["points"], [
+            [-1.0, -1.0, _x1 + 1, 2.0], [-1.0, 1.0, _x1 - 1, 2.0],
+            [1.0, -1.0, _x1 - 1, 2.0], [1.0, 1.0, _x1 + 1, 2.0],
+            [-1./3, 1./3, _x2, 2.0], [-1./9, -5./9, _x3, 2.0],
+        ])
+        self.assertEqual(data["snap_threshold"], 0.5)
+        self.assertEqual(data["nan_threshold"], 0.5)
+        self.assertEqual(data["volume_ratio"], 10)
 
     def test_max_fails(self):
         with self.assertRaises(RuntimeError):
             self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:1')
-        self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--max-fails", "5")
+        data = self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--max-fails", "5")
+        self.assertEqual(data["dims"], 2)
+        numpy.testing.assert_almost_equal(data["points"], [
+            [-1.0, -1.0, 0, 1.0], [-1.0, 1.0, 0, 1.0],
+            [1.0, -1.0, 0, 1.0], [1.0, 1.0, 0, 1.0],
+            [-1./3, 1./3, 0, 1.0],
+        ])
+        self.assertEqual(data["snap_threshold"], 0.5)
+        self.assertEqual(data["nan_threshold"], 0.5)
+        self.assertEqual(data["volume_ratio"], 10)
         with self.assertRaises(RuntimeError):
             self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--max-fails", "4")
-
-    def test_plot(self):
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', ignore_warnings=True)
 
     def test_gif(self):
         fl = tempfile.mkstemp(suffix=".gif")[1]
         self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', fl, ignore_warnings=True)
         self.assertTrue(os.path.isfile(fl))
+        data = imageio.mimread(fl)
+        self.assertEqual(len(data), 6)
+        for i in data:
+            self.assertEqual(i.shape, (900, 1012, 4))
 
     def test_tweaks(self):
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--snap-threshold", "0")
-        self.run_curious("2_2d_divergence.py", '-1 1, -1 1', '-l', 'eval:5', "--nan-threshold", "0")
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--volume-ratio", "1")
+        data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--snap-threshold", "0")
+        self.assertEqual(data["snap_threshold"], 0)
+        data = self.run_curious("2_2d_divergence.py", '-1 1, -1 1', '-l', 'eval:5', "--nan-threshold", "0")
+        self.assertEqual(data["nan_threshold"], 0)
+        data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--volume-ratio", "1")
+        self.assertEqual(data["volume_ratio"], 1)
 
     def test_restart(self):
         fl = tempfile.mkstemp(suffix=".json")[1]
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--save", fl)
-        self.assertTrue(os.path.isfile(fl))
-        pts = numpy.array(data["points"])
-        self.assertEqual(pts.shape, (5, 4))
+        self.assertEqual(numpy.array(data["points"]).shape, (5, 4))
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--load', fl, '--save', fl)
-        pts = numpy.array(data["points"])
-        self.assertEqual(pts.shape, (10, 4))
+        self.assertEqual(numpy.array(data["points"]).shape, (10, 4))
 
     def test_4d(self):
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1, -1 1, -1 1', '-l', 'eval:16')
-        pts = numpy.array(data["points"])
-        self.assertEqual(pts.shape, (16, 6))
+        self.assertEqual(numpy.array(data["points"]).shape, (16, 6))
