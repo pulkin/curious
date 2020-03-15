@@ -446,10 +446,6 @@ class PlotView1D:
         if len(running) > 0:
             self.ax.scatter(*running.T, facecolors='none', edgecolors="black")
 
-        done = self.guide.data[self.guide.m_done_numeric, :-1]
-        if len(done) > 0:
-            self.ax.scatter(*done.T, color="black", s=3)
-
         nan = self.guide.data[self.guide.m_done_nan, :-1]
         if len(nan) > 0:
             self.ax.scatter(*nan.T, s=10, color="#FF5555", marker="x")
@@ -537,10 +533,6 @@ class PlotView2D(PlotView1D):
         running = self.guide.coordinates[self.guide.m_running, :]
         if len(running) > 0:
             self.ax.scatter(*running.T, facecolors='none', edgecolors="white")
-
-        done = self.guide.coordinates[self.guide.m_done_numeric, :]
-        if len(done) > 0:
-            self.ax.scatter(*done.T, color="white", s=3)
 
         nan = self.guide.coordinates[self.guide.m_done_nan, :]
         if len(nan) > 0:
