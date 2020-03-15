@@ -1,4 +1,5 @@
 from unittest import TestCase
+import matplotlib
 
 import sys
 import os
@@ -150,13 +151,15 @@ class TestScript(TestCase):
             self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--max-fails", "4")
 
     def test_gif(self):
+        size_inches = matplotlib.rcParams["figure.figsize"]
+        dpi = matplotlib.rcParams["figure.dpi"]
         fl = tempfile.mkstemp(suffix=".gif")[1]
         self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', fl, ignore_warnings=True)
         self.assertTrue(os.path.isfile(fl))
         data = imageio.mimread(fl)
         self.assertEqual(len(data), 6)
         for i in data:
-            self.assertEqual(i.shape, (900, 1012, 4))
+            self.assertEqual(i.shape, (int(size_inches[1] * dpi), int(size_inches[0] * dpi), 4))
 
     def test_tweaks(self):
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--snap-threshold", "0")
