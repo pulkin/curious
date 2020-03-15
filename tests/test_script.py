@@ -12,8 +12,18 @@ import numpy
 class TestScript(TestCase):
     def run_curious(self, target, *options, debug=False, ignore_warnings=False):
         this = Path(os.path.dirname(os.path.realpath(__file__)))
+        if "--save" in options:
+            fl = None
+            for k, v in zip(options[:-1], options[1:]):
+                if k == "--save":
+                    fl = v
+            if fl is None:
+                raise ValueError("No argument followed by '--save'")
+        else:
+            fl = tempfile.mkstemp(suffix=".json")[1]
+        executable = "curious.py" if "CURIOUS_TEST_INSTALL" in os.environ else this / ".." / "scripts" / "curious.py"
         p = subprocess.Popen(
-            ("curious.py", this / "functions" / target, '--no-io') + tuple(options),
+            (executable, this / "functions" / target, '--save', fl) + tuple(options),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         out, err = p.communicate()
@@ -32,6 +42,9 @@ class TestScript(TestCase):
             self.assertEqual(out, "")
             if not ignore_warnings:
                 self.assertEqual(err, "")
+
+        with open(fl, 'r') as f:
+            return json.load(f)
 
     def test_lim_case_0(self):
         self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5')
@@ -76,23 +89,15 @@ class TestScript(TestCase):
 
     def test_restart(self):
         fl = tempfile.mkstemp(suffix=".json")[1]
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--save', fl)
+        data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--save", fl)
         self.assertTrue(os.path.isfile(fl))
-        with open(fl, 'r') as f:
-            data = json.load(f)
-            pts = numpy.array(data["points"])
-            self.assertEqual(pts.shape, (5, 4))
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--load', fl, '--save', fl)
-        with open(fl, 'r') as f:
-            data = json.load(f)
-            pts = numpy.array(data["points"])
-            self.assertEqual(pts.shape, (10, 4))
+        pts = numpy.array(data["points"])
+        self.assertEqual(pts.shape, (5, 4))
+        data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--load', fl, '--save', fl)
+        pts = numpy.array(data["points"])
+        self.assertEqual(pts.shape, (10, 4))
 
     def test_4d(self):
-        fl = tempfile.mkstemp(suffix=".json")[1]
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1, -1 1, -1 1', '-l', 'eval:16', '--save', fl)
-        self.assertTrue(os.path.isfile(fl))
-        with open(fl, 'r') as f:
-            data = json.load(f)
-            pts = numpy.array(data["points"])
-            self.assertEqual(pts.shape, (16, 6))
+        data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1, -1 1, -1 1', '-l', 'eval:16')
+        pts = numpy.array(data["points"])
+        self.assertEqual(pts.shape, (16, 6))
