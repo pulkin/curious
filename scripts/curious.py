@@ -11,7 +11,6 @@ from scipy.spatial import Delaunay
 
 from itertools import product
 from collections.abc import Iterable
-from warnings import warn
 import argparse
 import inspect
 from datetime import timedelta, datetime
