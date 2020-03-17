@@ -51,7 +51,7 @@ class DSTub1D:
 
 class Guide(Iterable):
     def __init__(self, dims, dims_f=1, points=None, snap_threshold=None, default_value=0, default_flag=FLAG_PENDING,
-                 priority_tolerance=None):
+                 priority_tolerance=None, meta=None):
         """
         Guides the sampling.
         Args:
@@ -62,17 +62,22 @@ class Guide(Iterable):
             default_value (float): default value to assign to input points;
             default_flag (float): default flag to assign to input points;
             priority_tolerance (float): expected tolerance of priority values;
+            meta (Iterable): additional metadata to store alongside each point;
         """
         self.dims = dims
         self.dims_f = dims_f
         if points is None:
             self.data = numpy.empty((0, dims + dims_f + 1), dtype=float)
+            self.data_meta = numpy.empty(0, dtype=object)
         else:
             points = numpy.array(tuple(points))
             self.data = numpy.zeros((len(points), dims + dims_f + 1), dtype=float)
+            self.data_meta = numpy.full(len(points), None, dtype=object)
             self.values[:] = default_value
             self.flags[:] = default_flag
             self.data[:, :points.shape[1]] = points
+            if meta is not None:
+                self.data_meta[:] = meta
         self.snap_threshold = snap_threshold
         self.default_value = default_value
         if priority_tolerance is None:
@@ -108,7 +113,8 @@ class Guide(Iterable):
 
     def __getstate__(self):
         return dict(dims=self.dims, dims_f=self.dims_f, points=self.data.tolist(), snap_threshold=self.snap_threshold,
-                    default_value=self.default_value, priority_tolerance=self.priority_tolerance)
+                    default_value=self.default_value, priority_tolerance=self.priority_tolerance,
+                    meta=self.data_meta.tolist())
 
     def __setstate__(self, state):
         self.__init__(**state)
@@ -177,6 +183,7 @@ class Guide(Iterable):
             self.data,
             [tuple(p) + ((self.default_value,) * self.dims_f + (FLAG_PENDING,))[len(p) - self.dims:]],
             axis=0)
+        self.data_meta = numpy.append(self.data_meta, [None])
         self.maybe_triangulate()
         return len(self.data) - 1
 
@@ -398,6 +405,7 @@ class PointProcessPool:
                     if len(matches) >= self.guide.dims_f:
                         self.guide.values[point] = matches[-self.guide.dims_f:]
                         self.guide.flags[point] = FLAG_DONE
+                        self.guide.data_meta[point] = (out, err)
 
         for i in transaction:
             self.processes.remove(i)
