@@ -486,6 +486,9 @@ class PlotView:
             else:
                 pyplot.savefig(self.target)
 
+    def __plot_main__(self):
+        raise NotImplementedError
+
     def __dump_animation__(self):
         """Dumps animation frame."""
         data = numpy.frombuffer(self.fig.canvas.tostring_rgb(), dtype='uint8')
