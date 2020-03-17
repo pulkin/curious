@@ -318,7 +318,7 @@ class CurvatureGuide(UniformGuide):
 
 
 class PointProcessPool:
-    def __init__(self, target, guide, float_regex=r"([-+]?[0-9]+\.?[0-9]*(?:[eEdD][-+]?[0-9]*)?)|(nan)",
+    def __init__(self, target, guide, float_regex=r"([-+]?[0-9]+\.?[0-9]*(?:[eEdD][-+]?[0-9]+)?)|(nan)",
                  encoding="utf-8", limit=None, fail_limit=None):
         self.target = target
         self.guide = guide
@@ -400,10 +400,10 @@ class PointProcessPool:
 
                 else:
                     self.__succeeded__ += 1
-                    matches = tuple(float(i.group()) for i in self.compiled_float_regex.finditer(out))
+                    matches = tuple(i.group() for i in self.compiled_float_regex.finditer(out))
 
                     if len(matches) >= self.guide.dims_f:
-                        self.guide.values[point] = matches[-self.guide.dims_f:]
+                        self.guide.values[point] = tuple(map(float, matches[-self.guide.dims_f:]))
                         self.guide.flags[point] = FLAG_DONE
                         self.guide.data_meta[point] = (out, err)
 
