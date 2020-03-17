@@ -655,13 +655,13 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
 
         if not data_folder.is_dir():
             print("Not a folder: {}".format(data_folder), file=sys.stderr)
-            print("Data: {}".format(json.dumps(guide.to_json())))
+            print("Data: {}".format(json.dumps(guide.to_json(), indent=2)))
             return 1
 
         else:
             v("Dumping into {} ...".format(save))
             with open(save, 'w') as f:
-                json.dump(guide.to_json(), f)
+                json.dump(guide.to_json(), f, indent=2)
 
     return ppp.failed > ppp.fail_limit
 
