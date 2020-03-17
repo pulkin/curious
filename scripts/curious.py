@@ -581,13 +581,25 @@ class PlotViewProj2D(PlotView):
         return self.guide.dims_f * self.guide.dims * (self.guide.dims - 1) / 2
 
     def __plot_main__(self):
-        for ax, ((x, y), v) in zip(self.ax, product(combinations(self.guide.coordinates.T, 2), self.guide.values.T)):
+        for ax, ((i_x, i_y), i_v) in zip(self.ax, product(
+                combinations(numpy.arange(self.guide.dims), 2),
+                numpy.arange(self.guide.dims_f),
+        )):
+            x = self.guide.coordinates[:, i_x]
+            y = self.guide.coordinates[:, i_y]
+            v = self.guide.values[:, i_v]
             for mask, kw in (
                 (self.guide.m_done_numeric, dict(c=v[self.guide.m_done_numeric])),
                 (self.guide.m_running, dict(facecolors='none', edgecolors="black")),
                 (self.guide.m_done_nan, dict(color="#FF5555", marker="x")),
             ):
                 ax.scatter(x[mask], y[mask], **kw)
+
+            ax.set_xlim(self.axes_limits[i_x])
+            ax.set_ylim(self.axes_limits[i_y])
+            ax.set_xlabel(f"x[{i_x}]")
+            ax.set_ylabel(f"x[{i_y}]")
+            ax.set_title(f"f(x)[{i_v}]")
 
 
 def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, plot=False,
