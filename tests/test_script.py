@@ -179,3 +179,24 @@ class TestScript(TestCase):
     def test_4d(self):
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1, -1 1, -1 1', '-l', 'eval:16')
         self.assertEqual(numpy.array(data["points"]).shape, (16, 6))
+
+    def test_two_component(self):
+        def f1(x):
+            return numpy.exp(-(x - 0.5) ** 2)
+
+        def f2(x):
+            return numpy.exp(-(x + 0.5) ** 2) / 2
+
+        data = self.run_curious("5_1d_2d_gaussian.py", '-1 1', '-l', 'eval:5', '--plot', '-n', '2')
+        self.assertEqual(data["dims"], 1)
+        self.assertEqual(data["dims_f"], 2)
+        numpy.testing.assert_equal(numpy.array(data["points"]), [
+            (-1, f1(-1), f2(-1), 2.0),
+            (1, f1(1), f2(1), 2.0),
+            (0, f1(0), f2(0), 2.0),
+            (-0.5, f1(-0.5), f2(-0.5), 2.0),
+            (-0.25, f1(-0.25), f2(-0.25), 2.0),
+        ])
+
+    def test_two_parameter_two_component(self):
+        self.run_curious("6_nd_2d_two_features.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', '-n', '2')
