@@ -9,7 +9,7 @@ from matplotlib.collections import LineCollection
 import numpy
 from scipy.spatial import Delaunay
 
-from itertools import product
+from itertools import product, combinations
 from collections.abc import Iterable
 import argparse
 import inspect
@@ -50,12 +50,13 @@ class DSTub1D:
 
 
 class Guide(Iterable):
-    def __init__(self, dims, points=None, snap_threshold=None, default_value=0, default_flag=FLAG_PENDING,
+    def __init__(self, dims, dims_f=1, points=None, snap_threshold=None, default_value=0, default_flag=FLAG_PENDING,
                  priority_tolerance=None):
         """
         Guides the sampling.
         Args:
-            dims (int): the dimensionality;
+            dims (int): the dimensionality of the parameter space;
+            dims_f (int): the dimensionality of the target cost function space;
             points (Iterable): data points;
             snap_threshold (float): a threshold to snap to triangle/simplex faces;
             default_value (float): default value to assign to input points;
@@ -63,15 +64,17 @@ class Guide(Iterable):
             priority_tolerance (float): expected tolerance of priority values;
         """
         self.dims = dims
+        self.dims_f = dims_f
         if points is None:
-            self.__data__ = numpy.empty((0, dims + 1), dtype=float)
+            self.data = numpy.empty((0, dims + dims_f + 1), dtype=float)
         else:
             points = numpy.array(tuple(points))
-            self.data = numpy.zeros((len(points), dims+2), dtype=float)
+            self.data = numpy.zeros((len(points), dims + dims_f + 1), dtype=float)
             self.values[:] = default_value
             self.flags[:] = default_flag
             self.data[:, :points.shape[1]] = points
         self.snap_threshold = snap_threshold
+        self.default_value = default_value
         if priority_tolerance is None:
             self.priority_tolerance = 1e-9
         else:
@@ -89,7 +92,7 @@ class Guide(Iterable):
         Returns:
             A new guide.
         """
-        return cls(len(bounds), product(*bounds), **kwargs)
+        return cls(len(bounds), points=product(*bounds), **kwargs)
 
     @property
     def coordinates(self):
@@ -97,14 +100,15 @@ class Guide(Iterable):
 
     @property
     def values(self):
-        return self.data[:, self.dims]
+        return self.data[:, self.dims:self.dims + self.dims_f]
 
     @property
     def flags(self):
-        return self.data[:, self.dims + 1]
+        return self.data[:, -1]
 
     def __getstate__(self):
-        return dict(dims=self.dims, points=self.data.tolist(), snap_threshold=self.snap_threshold)
+        return dict(dims=self.dims, dims_f=self.dims_f, points=self.data.tolist(), snap_threshold=self.snap_threshold,
+                    default_value=self.default_value, priority_tolerance=self.priority_tolerance)
 
     def __setstate__(self, state):
         self.__init__(**state)
@@ -133,14 +137,18 @@ class Guide(Iterable):
         return numpy.where(self.flags == FLAG_DONE)[0]
 
     @property
+    def __any_nan_mask__(self):
+        return numpy.any(numpy.isnan(self.values), axis=-1)
+
+    @property
     def m_done_numeric(self):
         """Final points with numeric values"""
-        return numpy.where((self.flags == FLAG_DONE) * (numpy.logical_not(numpy.isnan(self.values))))[0]
+        return numpy.where((self.flags == FLAG_DONE) * (numpy.logical_not(self.__any_nan_mask__)))[0]
 
     @property
     def m_done_nan(self):
         """Final points with numeric values"""
-        return numpy.where((self.flags == FLAG_DONE) * (numpy.isnan(self.values)))[0]
+        return numpy.where((self.flags == FLAG_DONE) * self.__any_nan_mask__)[0]
 
     def maybe_triangulate(self):
         """Computes a new triangulation"""
@@ -162,10 +170,13 @@ class Guide(Iterable):
         Returns:
             The index of the point added.
         """
-        if not self.dims <= len(p) < self.dims + 3:
-            raise ValueError("Wrong point data length {:d}, expected {:d} <= len(p) < {:d}".format(
-                len(p), self.dims, self.dims + 3))
-        self.data = numpy.append(self.data, [tuple(p) + (0, FLAG_PENDING)[len(p) - self.dims:]], axis=0)
+        if not self.dims <= len(p) <= self.dims + self.dims_f + 1:
+            raise ValueError("Wrong point data length {:d}, expected {:d} <= len(p) <= {:d}".format(
+                len(p), self.dims, self.dims + self.dims_f + 1))
+        self.data = numpy.append(
+            self.data,
+            [tuple(p) + ((self.default_value,) * self.dims_f + (FLAG_PENDING,))[len(p) - self.dims:]],
+            axis=0)
         self.maybe_triangulate()
         return len(self.data) - 1
 
@@ -231,7 +242,7 @@ class Guide(Iterable):
         center_bcc = self.__center__(simplex_coordinates)
         center_coordinate = center_bcc @ simplex_coordinates
         stub_value = center_bcc @ self.values[self.tri.simplices[simplex], ...]
-        return self.add(*center_coordinate, stub_value, FLAG_RUNNING)
+        return self.add(*center_coordinate, *stub_value, FLAG_RUNNING)
 
     def __iter__(self):
         return self
@@ -251,20 +262,16 @@ class UniformGuide(Guide):
 
 
 class CurvatureGuide(UniformGuide):
-    def __init__(self, dims, points, snap_threshold=None, nan_threshold=None, volume_ratio=None,
-                 priority_tolerance=None):
+    def __init__(self, *args, nan_threshold=None, volume_ratio=None, **kwargs):
         """
         Guides the sampling.
         Args:
-            dims (int): the dimensionality;
-            points (Iterable): data points;
-            snap_threshold (float): a threshold to snap to triangle/simplex faces;
             nan_threshold (float): a critical value of NaNs to fallback to uniform sampling;
             volume_ratio (float): the ratio between the largest volume present and the
             smallest volume to sample;
-            priority_tolerance (float): expected tolerance of priority values;
+            args, kwargs: passed to Guide;
         """
-        super().__init__(dims, points, snap_threshold, priority_tolerance=priority_tolerance)
+        super().__init__(*args, **kwargs)
         self.nan_threshold = nan_threshold
         self.volume_ratio = volume_ratio
 
@@ -279,7 +286,13 @@ class CurvatureGuide(UniformGuide):
 
     def get_curvature_measure(self):
         """Calculates the measure of curvature"""
-        return simplex_volumes_n(self.data[:, :self.dims+1], self.tri.simplices, *self.tri.vertex_neighbor_vertices)
+        fns = []
+        for i in self.values.T:
+            fns.append(simplex_volumes_n(
+                numpy.concatenate((self.coordinates, i[:, numpy.newaxis]), axis=-1),
+                self.tri.simplices, *self.tri.vertex_neighbor_vertices,
+            ))
+        return numpy.max(fns, axis=0)
 
     def priority(self):
         """Calculates priority for sampling of each triangle"""
@@ -380,12 +393,10 @@ class PointProcessPool:
 
                 else:
                     self.__succeeded__ += 1
-                    match = None
-                    for match in self.compiled_float_regex.finditer(out):
-                        pass
+                    matches = tuple(float(i.group()) for i in self.compiled_float_regex.finditer(out))
 
-                    if match is not None:
-                        self.guide.values[point] = float(match.group())
+                    if len(matches) >= self.guide.dims_f:
+                        self.guide.values[point] = matches[-self.guide.dims_f:]
                         self.guide.flags[point] = FLAG_DONE
 
         for i in transaction:
@@ -406,7 +417,26 @@ class PointProcessPool:
         self.draining = True
 
 
-class PlotView1D:
+def plot_matrix(n, **kwargs):
+    """
+    Creates a plot matrix.
+    Args:
+        n (int): the number of plots;
+        kwargs: keyword arguments passed to `pyplot.subplots`;
+
+    Returns:
+        Figure and axes.
+    """
+    n_cols = int(numpy.ceil(n ** .5))
+    n_rows = int(numpy.ceil(n / n_cols))
+    if "squeeze" not in kwargs:
+        kwargs["squeeze"] = False
+    fig, ax = pyplot.subplots(n_rows, n_cols, **kwargs)
+    ax = ax.reshape(-1)
+    return fig, ax
+
+
+class PlotView:
     def __init__(self, guide, target=None, window_close_listener=None, **kwargs):
         """
         Plots 1D sampling.
@@ -414,14 +444,12 @@ class PlotView1D:
             guide (Guide): the guide to view;
             kwargs: keyword arguments to `pyplot.subplots`;
         """
-        if guide.dims != 1:
-            raise ValueError("This view is only for 1D guides")
         self.guide = guide
         self.axes_limits = guide.get_lims()
         self.target = target
         if target:
             matplotlib.use('agg')
-        self.fig, self.ax = pyplot.subplots(**kwargs)
+        self.fig, self.ax = plot_matrix(self.__get_plot_n__(), **kwargs)
         if self.target is None:
             pyplot.ion()
             pyplot.show()
@@ -434,32 +462,19 @@ class PlotView1D:
         else:
             self.animation_data = None
 
-    def __plot_main__(self):
-        tri = self.guide.tri
-        p = tri.points.squeeze()[tri.simplices]
-        v = self.guide.values[tri.simplices]
-        lc = LineCollection(numpy.concatenate((p[..., numpy.newaxis], v[..., numpy.newaxis]), axis=-1))
-        pyplot.gca().add_collection(lc)
-
-        running = self.guide.data[self.guide.m_running, :-1]
-        if len(running) > 0:
-            self.ax.scatter(*running.T, facecolors='none', edgecolors="black")
-
-        nan = self.guide.data[self.guide.m_done_nan, :-1]
-        if len(nan) > 0:
-            self.ax.scatter(*nan.T, s=10, color="#FF5555", marker="x")
-
-        self.ax.set_xlim(self.axes_limits[0])
+    def __get_plot_n__(self):
+        return self.guide.dims_f
 
     def update(self):
         """Updates the figure."""
         if self.guide.tri is None:
             raise ValueError("Triangulation is None")
 
-        self.ax.clear()
+        for ax in self.ax:
+            ax.clear()
         self.__plot_main__()
 
-        self.ax.set_title("Data: {:d} points".format(len(self.guide.values)))
+        self.fig.suptitle("Data: {:d} points".format(len(self.guide.values)))
 
         self.fig.canvas.draw()
         if self.target is None:
@@ -467,7 +482,7 @@ class PlotView1D:
         else:
             if self.record_animation:
                 if len(self.animation_data) > 0:
-                    imageio.mimsave(self.target, self.animation_data)
+                    imageio.mimsave(self.target, self.animation_data, duration=1)
             else:
                 pyplot.savefig(self.target)
 
@@ -485,63 +500,86 @@ class PlotView1D:
                 self.__dump_animation__()
 
 
-class PlotView2D(PlotView1D):
-    def __init__(self, guide, target=None, window_close_listener=None, **kwargs):
-        """
-        Plots 2D sampling.
-        Args:
-            guide (Guide): the guide to view;
-            kwargs: keyword arguments to `pyplot.subplots`;
-        """
-        if guide.dims != 2:
-            raise ValueError("This view is only for 2D guides")
-        self.guide = guide
-        self.axes_limits = guide.get_lims()
-        self.color_bar = True
-        self.target = target
-        if target:
-            matplotlib.use('agg')
-        self.fig, self.ax = pyplot.subplots(**kwargs)
-        if self.target is None:
-            pyplot.ion()
-            pyplot.show()
-            if window_close_listener is not None:
-                self.fig.canvas.mpl_connect('close_event', window_close_listener)
-
-        self.record_animation = self.target is not None and self.target.endswith(".gif")
-        if self.record_animation:
-            self.animation_data = []
-        else:
-            self.animation_data = None
+class PlotView1D(PlotView):
+    def __init__(self, guide, **kwargs):
+        if guide.dims != 1:
+            raise ValueError("This view is for 1D->ND functions only")
+        super().__init__(guide, **kwargs)
 
     def __plot_main__(self):
-        color_plot = self.ax.tripcolor(
-            Triangulation(*self.guide.tri.points.T, triangles=self.guide.tri.simplices),
-            self.guide.values,
-            vmin=numpy.nanmin(self.guide.values),
-            vmax=numpy.nanmax(self.guide.values),
-        )
+        tri = self.guide.tri
+        p = tri.points.squeeze()[tri.simplices]
+        coordinates = numpy.squeeze(self.guide.coordinates, axis=-1)
+        for values, ax in zip(self.guide.values.T, self.ax):
+            v = values[tri.simplices]
+            lc = LineCollection(numpy.concatenate((p[..., numpy.newaxis], v[..., numpy.newaxis]), axis=-1))
+            ax.add_collection(lc)
 
-        if self.color_bar is True:
-            self.color_bar = pyplot.colorbar(color_plot)
-        elif self.color_bar in (False, None):
-            pass
-        else:
-            self.color_bar.on_mappable_changed(color_plot)
+            running = self.guide.m_running
+            if numpy.any(running):
+                ax.scatter(coordinates[running], values[running], facecolors='none', edgecolors="black")
 
-        running = self.guide.coordinates[self.guide.m_running, :]
-        if len(running) > 0:
-            self.ax.scatter(*running.T, facecolors='none', edgecolors="white")
+            nan = self.guide.m_done_nan
+            if numpy.any(nan):
+                ax.scatter(coordinates[nan], values[nan], s=10, color="#FF5555", marker="x")
 
-        nan = self.guide.coordinates[self.guide.m_done_nan, :]
-        if len(nan) > 0:
-            self.ax.scatter(*nan.T, s=10, color="#FF5555", marker="x")
-
-        self.ax.set_xlim(self.axes_limits[0])
-        self.ax.set_ylim(self.axes_limits[1])
+            ax.set_xlim(self.axes_limits[0])
 
 
-def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=False,
+class PlotView2D(PlotView):
+    def __init__(self, guide, **kwargs):
+        if guide.dims != 2:
+            raise ValueError("This view is for 2D->ND functions only")
+        super().__init__(guide, **kwargs)
+
+    def __plot_main__(self):
+        for values, ax in zip(self.guide.values.T, self.ax):
+            color_plot = ax.tripcolor(
+                Triangulation(*self.guide.tri.points.T, triangles=self.guide.tri.simplices),
+                values,
+                vmin=numpy.nanmin(self.guide.values),
+                vmax=numpy.nanmax(self.guide.values),
+            )
+
+            # if self.color_bar is True:
+            #     self.color_bar = pyplot.colorbar(color_plot)
+            # elif self.color_bar in (False, None):
+            #     pass
+            # else:
+            #     self.color_bar.on_mappable_changed(color_plot)
+
+            # valid = self.guide.coordinates[self.guide.m_done_numeric, :]
+            # if len(valid) > 0:
+            #     ax.scatter(*valid.T, color="white")
+
+            running = self.guide.coordinates[self.guide.m_running, :]
+            if len(running) > 0:
+                ax.scatter(*running.T, facecolors='none', edgecolors="white")
+
+            nan = self.guide.coordinates[self.guide.m_done_nan, :]
+            if len(nan) > 0:
+                ax.scatter(*nan.T, s=10, color="#FF5555", marker="x")
+
+
+            ax.set_xlim(self.axes_limits[0])
+            ax.set_ylim(self.axes_limits[1])
+
+
+class PlotViewProj2D(PlotView):
+    def __get_plot_n__(self):
+        return self.guide.dims_f * self.guide.dims * (self.guide.dims - 1) / 2
+
+    def __plot_main__(self):
+        for ax, ((x, y), v) in zip(self.ax, product(combinations(self.guide.coordinates.T, 2), self.guide.values.T)):
+            for mask, kw in (
+                (self.guide.m_done_numeric, dict(c=v[self.guide.m_done_numeric])),
+                (self.guide.m_running, dict(facecolors='none', edgecolors="black")),
+                (self.guide.m_done_nan, dict(color="#FF5555", marker="x")),
+            ):
+                ax.scatter(x[mask], y[mask], **kw)
+
+
+def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, plot=False,
         snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, save=True, load=None):
 
     def v(*args, **kwargs):
@@ -555,7 +593,7 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
     else:
         guide = CurvatureGuide.from_bounds(
             ranges, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
-            volume_ratio=volume_ratio
+            volume_ratio=volume_ratio, dims_f=n,
         )
 
     ppp = PointProcessPool(target, guide, limit=limit, fail_limit=max_fails)
@@ -563,13 +601,9 @@ def run(target, ranges, verbose=False, depth=1, max_fails=0, limit=None, plot=Fa
     v("Hello")
 
     if plot is not False:
-        if 1 <= guide.dims <= 2:
-            plot_view = {1: PlotView1D, 2: PlotView2D}[guide.dims](guide, target=plot, window_close_listener=ppp.start_drain)
-            plot_view.notify_changed()
-
-        else:
-            warn("Cannot plot {:d}D data".format(guide.dims))
-            plot_view = None
+        plot_view = {1: PlotView1D, 2: PlotView2D}.get(guide.dims, PlotViewProj2D)(
+            guide, target=plot, window_close_listener=ppp.start_drain)
+        plot_view.notify_changed()
 
     else:
         plot_view = None
@@ -692,6 +726,7 @@ if __name__ == "__main__":
     parser.add_argument("ranges", help="ranges to sample", metavar="X Y, A B, ...", type=str)
 
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose output")
+    parser.add_argument("-n", help="the number of target cost functions", metavar="N", type=int, default=defaults["n"])
     parser.add_argument("-d", "--depth", help="the number of simultaneous evaluations", metavar="N", type=int,
                         default=defaults["depth"])
     parser.add_argument("-f", "--max-fails", help="the maximal number of failures before exiting", metavar="N",
@@ -719,6 +754,7 @@ if __name__ == "__main__":
     exit(run(
         target=options.target,
         ranges=s2r(options.ranges),
+        n=options.n,
         verbose=options.verbose,
         depth=options.depth,
         max_fails=options.max_fails,
