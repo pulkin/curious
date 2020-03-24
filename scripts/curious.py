@@ -612,12 +612,17 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
     if load is not None:
         v("Loading from {} ...".format(load))
         with open(load, 'r') as f:
-            guide = CurvatureGuide.from_json(json.load(f))
+            guide = (UniformGuide if n == 0 else CurvatureGuide).from_json(json.load(f))
     else:
-        guide = CurvatureGuide.from_bounds(
-            ranges, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
-            volume_ratio=volume_ratio, dims_f=n,
-        )
+        if n == 0:
+            guide = UniformGuide.from_bounds(
+                ranges, snap_threshold=snap_threshold, dims_f=n,
+            )
+        else:
+            guide = CurvatureGuide.from_bounds(
+                ranges, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
+                volume_ratio=volume_ratio, dims_f=n,
+            )
 
     ppp = PointProcessPool(target, guide, limit=limit, fail_limit=max_fails)
 
