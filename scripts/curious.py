@@ -655,8 +655,8 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
             if swept or spawned:
                 if plot_view is not None:
                     plot_view.notify_changed()
-                v("Running: {:d} (+{:d} -{:d}) \ttotal: {:d} ({:d} fails) \t{}".format(
-                    ppp.running, spawned, swept, ppp.completed, ppp.failed, "DRAIN" if ppp.draining else ""))
+                v("Running: {:d} (+{:d} -{:d}) \tcompleted: {:d}[{:d}] ({:d} fails) \t{}".format(
+                    ppp.running, spawned, swept, ppp.completed, len(guide.m_done), ppp.failed, "DRAIN" if ppp.draining else ""))
 
             time.sleep(0.1)
 
