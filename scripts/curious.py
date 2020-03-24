@@ -399,13 +399,16 @@ class PointProcessPool:
                     self.__failed__ += 1
 
                 else:
-                    self.__succeeded__ += 1
                     matches = tuple(i.group() for i in self.compiled_float_regex.finditer(out))
 
                     if len(matches) >= self.guide.dims_f:
-                        self.guide.values[point] = tuple(map(float, matches[-self.guide.dims_f:]))
+                        if self.guide.dims_f > 0:
+                            self.guide.values[point] = tuple(map(float, matches[-self.guide.dims_f:]))
                         self.guide.flags[point] = FLAG_DONE
                         self.guide.data_meta[point] = (out, err)
+                        self.__succeeded__ += 1
+                    else:
+                        print("Missing {:d} numbers in the output".format(self.guide.dims_f))
 
         for i in transaction:
             self.processes.remove(i)

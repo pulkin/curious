@@ -65,7 +65,7 @@ class TestScript(TestCase):
         meta = numpy.array(data["meta"])
         self.assertEqual(meta.shape, (5, 2))
         # Output stream
-        out_num = tuple(float(i[:-1]) for i in meta[:, 0])
+        out_num = tuple(float(i[i.index("\n")+1:-1]) for i in meta[:, 0])
         numpy.testing.assert_almost_equal(out_num, (_x1 + 1, _x1 - 1, _x1 - 1, _x1 + 1, _x2))
         # Error stream
         numpy.testing.assert_equal(meta[:, 1], ('',) * 5)
