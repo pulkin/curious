@@ -123,6 +123,14 @@ class Guide(Iterable):
         """To json representation"""
         return self.__getstate__()
 
+    def save_to(self, f):
+        """Saves to a file"""
+        if isinstance(f, (str, Path)):
+            with open(f, 'w') as _f:
+                json.dump(self.to_json(), _f, indent=2)
+        else:
+            json.dump(self.to_json(), f, indent=2)
+
     @classmethod
     def from_json(cls, data):
         """Object from json representation"""
@@ -627,6 +635,22 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
                 volume_ratio=volume_ratio, dims_f=n,
             )
 
+    if save not in (None, False):
+        if save is True:
+            data_folder = Path(".curious")
+            save = data_folder / datetime.now().strftime("%Y-%m-%d-%H:%M:%S:%f.json")
+        else:
+            save = Path(save)
+            data_folder = save.parent
+
+        if not data_folder.exists():
+            v("Creating data folder {} ...".format(data_folder))
+            os.mkdir(data_folder)
+
+        if not data_folder.is_dir():
+            print("Not a folder: {}".format(data_folder), file=sys.stderr)
+            return 1
+
     ppp = PointProcessPool(target, guide, limit=limit, fail_limit=max_fails)
 
     v("Hello")
@@ -660,6 +684,8 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
                     plot_view.notify_changed()
                 v("Running: {:d} (+{:d} -{:d}) \tcompleted: {:d}[{:d}] ({:d} fails) \t{}".format(
                     ppp.running, spawned, swept, ppp.completed, len(guide.m_done), ppp.failed, "DRAIN" if ppp.draining else ""))
+                if save:
+                    guide.save_to(save)
 
             time.sleep(0.1)
 
@@ -671,28 +697,6 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
                 ppp.start_drain()
 
     v("Done")
-
-    if save not in (None, False):
-        if save is True:
-            data_folder = Path(".curious")
-            save = data_folder / datetime.now().strftime("%Y-%m-%d-%H:%M:%S:%f.json")
-        else:
-            save = Path(save)
-            data_folder = save.parent
-
-        if not data_folder.exists():
-            v("Creating data folder {} ...".format(data_folder))
-            os.mkdir(data_folder)
-
-        if not data_folder.is_dir():
-            print("Not a folder: {}".format(data_folder), file=sys.stderr)
-            print("Data: {}".format(json.dumps(guide.to_json(), indent=2)))
-            return 1
-
-        else:
-            v("Dumping into {} ...".format(save))
-            with open(save, 'w') as f:
-                json.dump(guide.to_json(), f, indent=2)
 
     return ppp.failed > ppp.fail_limit
 
