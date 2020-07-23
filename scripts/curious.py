@@ -469,11 +469,14 @@ def plot_matrix(n, **kwargs):
 
 
 class PlotView:
-    def __init__(self, guide, target=None, window_close_listener=None, **kwargs):
+    def __init__(self, guide, target=None, window_close_listener=None, on_plot_update=None, **kwargs):
         """
         Plots 1D sampling.
         Args:
             guide (Guide): the guide to view;
+            target (str): optional file name to plot to;
+            window_close_listener (Callable): optional listener of plot window close events;
+            on_plot_update (Callable): an optional listener of plot updates;
             kwargs: keyword arguments to `pyplot.subplots`;
         """
         self.guide = guide
@@ -493,6 +496,7 @@ class PlotView:
             self.animation_data = []
         else:
             self.animation_data = None
+        self.on_plot_update = on_plot_update
 
     def __get_plot_n__(self):
         return self.guide.dims_f
@@ -517,6 +521,9 @@ class PlotView:
                     imageio.mimsave(self.target, self.animation_data, duration=1)
             else:
                 pyplot.savefig(self.target)
+
+        if self.on_plot_update is not None:
+            self.on_plot_update(self)
 
     def __plot_main__(self):
         raise NotImplementedError
@@ -627,11 +634,18 @@ class PlotViewProj2D(PlotView):
 
 
 def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, plot=False,
-        snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, aspect="auto", save=True, load=None):
+        snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, aspect="auto", save=True, load=None,
+        on_plot_update=None):
 
     def v(*args, **kwargs):
         if verbose:
             print(*args, **kwargs)
+
+    if on_plot_update is not None:
+        def on_plot_update_fun(plotter):
+            subprocess.Popen(on_plot_update, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    else:
+        on_plot_update_fun = None
 
     if load is not None:
         v("Loading from {} ...".format(load))
@@ -670,7 +684,7 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
 
     if plot is not False:
         plot_view = {1: PlotView1D, 2: PlotView2D}.get(guide.dims, PlotViewProj2D)(
-            guide, target=plot, window_close_listener=ppp.start_drain)
+            guide, target=plot, window_close_listener=ppp.start_drain, on_plot_update=on_plot_update_fun)
         plot_view.notify_changed()
 
     else:
@@ -798,7 +812,8 @@ if __name__ == "__main__":
                         default=defaults["save"])
     parser.add_argument("--load", help="loads a previous calculation", metavar="FILENAME", type=str,
                         default=defaults["load"])
-
+    parser.add_argument("--on-plot-update", help="runs a command after updating progress plot", metavar="COMMAND",
+                        type=str, default=defaults["on_plot_update"])
     options = parser.parse_args()
 
     exit(run(
@@ -816,4 +831,5 @@ if __name__ == "__main__":
         aspect=options.aspect,
         save=options.save if options.save is not True else not options.no_io,
         load=options.load,
+        on_plot_update=options.on_plot_update,
     ))
