@@ -173,7 +173,7 @@ class Guide(Iterable):
             if self.aspect == "auto":
                 coordinates_min = self.coordinates.min(axis=0)
                 coordinates_max = self.coordinates.max(axis=0)
-                coordinates = self.coordinates / (coordinates_max - coordinates_min)[numpy.newaxis, :]
+                coordinates = self.coordinates / ((coordinates_max - coordinates_min)[numpy.newaxis, :])
             elif self.aspect is None or self.aspect == "none":
                 coordinates = self.coordinates
             else:
@@ -543,7 +543,7 @@ class PlotView1D(PlotView):
 
     def __plot_main__(self):
         tri = self.guide.tri
-        p = tri.points.squeeze()[tri.simplices]
+        p = self.guide.coordinates.squeeze()[tri.simplices]
         coordinates = numpy.squeeze(self.guide.coordinates, axis=-1)
         for values, ax in zip(self.guide.values.T, self.ax):
             v = values[tri.simplices]
@@ -570,7 +570,7 @@ class PlotView2D(PlotView):
     def __plot_main__(self):
         for values, ax in zip(self.guide.values.T, self.ax):
             color_plot = ax.tripcolor(
-                Triangulation(*self.guide.tri.points.T, triangles=self.guide.tri.simplices),
+                Triangulation(*self.guide.coordinates.T, triangles=self.guide.tri.simplices),
                 values,
                 vmin=numpy.nanmin(self.guide.values),
                 vmax=numpy.nanmax(self.guide.values),
@@ -791,7 +791,8 @@ if __name__ == "__main__":
                         metavar="FLOAT", type=float, default=defaults["nan_threshold"])
     parser.add_argument("--volume-ratio", help="the largest-to-smallest volume ratio to keep",
                         metavar="FLOAT", type=float, default=defaults["volume_ratio"])
-    parser.add_argument("--aspect", choices=["none", "auto"], help="adjust aspect ratio when triangulating")
+    parser.add_argument("--aspect", choices=["none", "auto"], help="adjust aspect ratio when triangulating",
+                        default=defaults["aspect"])
     parser.add_argument("--no-io", help="do not save progress", action="store_true")
     parser.add_argument("--save", help="save progress to a file (overrides --no-io)", metavar="FILENAME", type=str,
                         default=defaults["save"])
