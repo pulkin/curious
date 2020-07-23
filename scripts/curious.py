@@ -51,7 +51,7 @@ class DSTub1D:
 
 class Guide(Iterable):
     def __init__(self, dims, dims_f=1, points=None, snap_threshold=None, default_value=0, default_flag=FLAG_PENDING,
-                 priority_tolerance=None, meta=None):
+                 priority_tolerance=None, meta=None, aspect="auto"):
         """
         Guides the sampling.
         Args:
@@ -63,6 +63,7 @@ class Guide(Iterable):
             default_flag (float): default flag to assign to input points;
             priority_tolerance (float): expected tolerance of priority values;
             meta (Iterable): additional metadata to store alongside each point;
+            aspect (str): "auto" for automatic rescaling of axes when triangulating;
         """
         self.dims = dims
         self.dims_f = dims_f
@@ -84,6 +85,7 @@ class Guide(Iterable):
             self.priority_tolerance = 1e-9
         else:
             self.priority_tolerance = priority_tolerance
+        self.aspect = aspect
         self.tri = self.maybe_triangulate()
 
     @classmethod
@@ -167,10 +169,21 @@ class Guide(Iterable):
     def maybe_triangulate(self):
         """Computes a new triangulation"""
         if len(self.data) >= 2 ** self.dims:
-            if self.dims == 1:
-                self.tri = DSTub1D(self.coordinates)
+
+            if self.aspect == "auto":
+                coordinates_min = self.coordinates.min(axis=0)
+                coordinates_max = self.coordinates.max(axis=0)
+                coordinates = self.coordinates / (coordinates_max - coordinates_min)[numpy.newaxis, :]
+            elif self.aspect is None or self.aspect == "none":
+                coordinates = self.coordinates
             else:
-                self.tri = Delaunay(self.coordinates, qhull_options='Qz')
+                raise ValueError("Unknown aspect: {}".format(self.aspect))
+
+            if self.dims == 1:
+                self.tri = DSTub1D(coordinates)
+            else:
+                self.tri = Delaunay(coordinates, qhull_options='Qz')
+
         else:
             self.tri = None
         return self.tri
@@ -253,7 +266,7 @@ class Guide(Iterable):
             max_priority = numpy.max(priority)
             simplex = self.__choose_from_alternatives__(
                 numpy.where(priority >= max_priority - self.priority_tolerance)[0])
-        simplex_coordinates = self.tri.points[self.tri.simplices[simplex], :]
+        simplex_coordinates = self.coordinates[self.tri.simplices[simplex], :]
         center_bcc = self.__center__(simplex_coordinates)
         center_coordinate = center_bcc @ simplex_coordinates
         stub_value = center_bcc @ self.values[self.tri.simplices[simplex], ...]
@@ -269,7 +282,7 @@ class UniformGuide(Guide):
 
     def get_simplex_volumes(self):
         """Calculates simplexes' volumes"""
-        return simplex_volumes(self.tri.points, self.tri.simplices)
+        return simplex_volumes(self.coordinates, self.tri.simplices)
 
     def priority(self):
         """Calculates priority for sampling of each triangle"""
@@ -614,7 +627,7 @@ class PlotViewProj2D(PlotView):
 
 
 def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, plot=False,
-        snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, save=True, load=None):
+        snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, aspect="auto", save=True, load=None):
 
     def v(*args, **kwargs):
         if verbose:
@@ -627,12 +640,12 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
     else:
         if n == 0:
             guide = UniformGuide.from_bounds(
-                ranges, snap_threshold=snap_threshold, dims_f=n,
+                ranges, snap_threshold=snap_threshold, dims_f=n, aspect=aspect,
             )
         else:
             guide = CurvatureGuide.from_bounds(
                 ranges, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
-                volume_ratio=volume_ratio, dims_f=n,
+                volume_ratio=volume_ratio, dims_f=n, aspect=aspect,
             )
 
     if save not in (None, False):
@@ -778,6 +791,7 @@ if __name__ == "__main__":
                         metavar="FLOAT", type=float, default=defaults["nan_threshold"])
     parser.add_argument("--volume-ratio", help="the largest-to-smallest volume ratio to keep",
                         metavar="FLOAT", type=float, default=defaults["volume_ratio"])
+    parser.add_argument("--aspect", choices=["none", "auto"], help="adjust aspect ratio when triangulating")
     parser.add_argument("--no-io", help="do not save progress", action="store_true")
     parser.add_argument("--save", help="save progress to a file (overrides --no-io)", metavar="FILENAME", type=str,
                         default=defaults["save"])
@@ -798,6 +812,7 @@ if __name__ == "__main__":
         snap_threshold=options.snap_threshold,
         nan_threshold=options.nan_threshold,
         volume_ratio=options.volume_ratio,
+        aspect=options.aspect,
         save=options.save if options.save is not True else not options.no_io,
         load=options.load,
     ))
