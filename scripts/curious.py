@@ -645,6 +645,13 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
             guide = (UniformGuide if dims_f == 0 else CurvatureGuide).from_json(json.load(f))
         # Update the guide with the new parameters
         guide.set_bounds(bounds)
+        guide.snap_threshold = snap_threshold
+        if guide.dims_f != dims_f:
+            v(f"WARN Ignoring dims_f={dims_f}, using restored value {guide.dims_f}")
+        guide.rescale = rescale
+        if isinstance(guide, CurvatureGuide):
+            guide.nan_threshold = nan_threshold
+            guide.volume_ratio = volume_ratio
     else:
         if dims_f == 0:
             guide = UniformGuide.from_bounds(bounds, snap_threshold=snap_threshold, dims_f=dims_f, rescale=rescale)
@@ -803,7 +810,7 @@ if __name__ == "__main__":
         snap_threshold=options.snap_threshold,
         nan_threshold=options.nan_threshold,
         volume_ratio=options.volume_ratio,
-        rescale=options.no_rescale,
+        rescale=not options.no_rescale,
         save=options.save if options.save is not True else not options.no_io,
         load=options.load,
         on_update=options.on_update,

@@ -168,13 +168,33 @@ class TestScript(TestCase):
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--save", fl)
         self.assertEqual(numpy.array(data["points"]).shape, (5, 4))
         self.assertEqual(numpy.array(data["meta"]).shape, (5, 2))
-        data_new = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--load', fl, '--save', fl)
+        data_new = self.run_curious("0_nd_circle_feature.py", '-1 2, -1 1', '-l', 'eval:5', '--load', fl, '--save', fl,
+                                    "--snap-threshold", "0.1", "--no-rescale", "--nan-threshold", "0.1",
+                                    "--volume-ratio", "30")
+
         self.assertEqual(numpy.array(data_new["points"]).shape, (10, 4))
         self.assertEqual(numpy.array(data_new["meta"]).shape, (10, 2))
+
         data_test = data_new.copy()
         data_test["points"] = data_test["points"][:5]
         data_test["meta"] = data_test["meta"][:5]
+        data_test["snap_threshold"] = 0.5
+        data_test["nan_threshold"] = 0.5
+        data_test["rescale"] = True
+        data_test["volume_ratio"] = 10
         self.assertEqual(data, data_test)
+
+        point_coordinates = numpy.array(data_new["points"])[:, :2]
+        d = numpy.linalg.norm(point_coordinates - [[2, -1]], axis=-1)
+        self.assertEqual((d == 0).sum(), 1)
+
+        d = numpy.linalg.norm(point_coordinates - [[2, 1]], axis=-1)
+        self.assertEqual((d == 0).sum(), 1)
+
+        self.assertEqual(data_new["snap_threshold"], 0.1)
+        self.assertEqual(data_new["nan_threshold"], 0.1)
+        self.assertEqual(data_new["rescale"], False)
+        self.assertEqual(data_new["volume_ratio"], 30)
 
     def test_4d(self):
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1, -1 1, -1 1', '-l', 'eval:16')
