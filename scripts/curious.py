@@ -634,9 +634,12 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
 
     if on_update is not None:
         def on_plot_update_fun(guide):
-            p = subprocess.Popen(on_update, stdin=subprocess.PIPE, shell=True, encoding="utf-8")
-            p.stdin.write(json.dumps(guide.to_json()))
-            p.stdin.close()
+            try:
+                p = subprocess.Popen(on_update, stdin=subprocess.PIPE, shell=True, encoding="utf-8")
+                p.stdin.write(json.dumps(guide.to_json()))
+                p.stdin.close()
+            except BrokenPipeError:
+                v("WARN on_update process refused to receive JSON data", important=True)
     else:
         def on_plot_update_fun(guide):
             pass
