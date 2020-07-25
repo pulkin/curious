@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 from cutil import simplex_volumes, simplex_volumes_n
 
-import imageio
-import matplotlib
-from matplotlib import pyplot
-from matplotlib.tri import Triangulation
-from matplotlib.collections import LineCollection
-import numpy
+import numpy as np
 from scipy.spatial import Delaunay
 
-from itertools import product, combinations
+from itertools import product
 from collections.abc import Iterable
 import argparse
 import inspect
@@ -40,47 +35,47 @@ class DSTub1D:
         # Points
         self.points = coordinates
 
-        # Simplices
-        order = numpy.argsort(coordinates[:, 0]).astype(numpy.int32)
-        self.simplices = numpy.concatenate((order[:-1, numpy.newaxis], order[1:, numpy.newaxis]), axis=-1)
+        # Simplexes
+        order = np.argsort(coordinates[:, 0]).astype(np.int32)
+        self.simplices = np.concatenate((order[:-1, np.newaxis], order[1:, np.newaxis]), axis=-1)
 
         # Neighbours
-        left_right = numpy.full(len(order) + 2, -1, dtype=numpy.int32)
+        left_right = np.full(len(order) + 2, -1, dtype=np.int32)
         left_right[1:-1] = order
-        order_inv = numpy.argsort(order)
+        order_inv = np.argsort(order)
         left = left_right[:-2][order_inv]
         right = left_right[2:][order_inv]
-        neighbours = numpy.concatenate((right[:, numpy.newaxis], left[:, numpy.newaxis]), axis=-1).reshape(-1)
-        neighbours_ptr = numpy.arange(0, len(neighbours) + 2, 2, dtype=numpy.int32)
+        neighbours = np.concatenate((right[:, np.newaxis], left[:, np.newaxis]), axis=-1).reshape(-1)
+        neighbours_ptr = np.arange(0, len(neighbours) + 2, 2, dtype=np.int32)
         self.vertex_neighbor_vertices = neighbours_ptr, neighbours
 
 
 class Guide(Iterable):
     def __init__(self, dims, dims_f=1, points=None, snap_threshold=None, default_value=0, default_flag=FLAG_PENDING,
-                 priority_tolerance=None, meta=None, aspect="auto"):
+                 priority_tolerance=None, meta=None, rescale=True):
         """
         Guides the sampling.
 
         Args:
             dims (int): the dimensionality of the parameter space to sample;
-            dims_f (int): the dimensionality of the output;
+            dims_f (int): the dimensionality of the output (target space);
             points (Iterable): data points;
             snap_threshold (float): a threshold to snap to triangle/simplex faces;
             default_value (float): default value to assign to input points;
             default_flag (float): default flag to assign to input points;
             priority_tolerance (float): expected tolerance of priority values;
             meta (Iterable): additional metadata to store alongside each point;
-            aspect (str): "auto" for automatic rescaling of axes when triangulating;
+            rescale (bool): if True, rescales parameter ranges to a unit box before triangulating;
         """
         self.dims = dims
         self.dims_f = dims_f
         if points is None:
-            self.data = numpy.empty((0, dims + dims_f + 1), dtype=float)
-            self.data_meta = numpy.empty(0, dtype=object)
+            self.data = np.empty((0, dims + dims_f + 1), dtype=float)
+            self.data_meta = np.empty(0, dtype=object)
         else:
-            points = numpy.array(tuple(points))
-            self.data = numpy.zeros((len(points), dims + dims_f + 1), dtype=float)
-            self.data_meta = numpy.full(len(points), None, dtype=object)
+            points = np.array(tuple(points))
+            self.data = np.zeros((len(points), dims + dims_f + 1), dtype=float)
+            self.data_meta = np.full(len(points), None, dtype=object)
             self.values[:] = default_value
             self.flags[:] = default_flag
             self.data[:, :points.shape[1]] = points
@@ -92,13 +87,24 @@ class Guide(Iterable):
             self.priority_tolerance = 1e-9
         else:
             self.priority_tolerance = priority_tolerance
-        self.aspect = aspect
+        self.rescale = rescale
         self.tri = self.maybe_triangulate()
+
+    def set_bounds(self, bounds):
+        """
+        Set new bounds.
+
+        Args:
+            bounds (tuple): bounds defining the box;
+        """
+        for i in product(*bounds):
+            self.maybe_add(*i, strict=False)
 
     @classmethod
     def from_bounds(cls, bounds, **kwargs):
         """
         Constructs a guide starting from multidimensional box bounds.
+
         Args:
             bounds (tuple): bounds defining the box;
             **kwargs: keyword arguments to constructor;
@@ -109,21 +115,21 @@ class Guide(Iterable):
         return cls(len(bounds), points=product(*bounds), **kwargs)
 
     @property
-    def coordinates(self) -> numpy.ndarray:
+    def coordinates(self) -> np.ndarray:
         return self.data[:, :self.dims]
 
     @property
-    def values(self) -> numpy.ndarray:
+    def values(self) -> np.ndarray:
         return self.data[:, self.dims:self.dims + self.dims_f]
 
     @property
-    def flags(self) -> numpy.ndarray:
+    def flags(self) -> np.ndarray:
         return self.data[:, -1]
 
     def __getstate__(self) -> dict:
         return dict(dims=self.dims, dims_f=self.dims_f, points=self.data.tolist(), snap_threshold=self.snap_threshold,
                     default_value=self.default_value, priority_tolerance=self.priority_tolerance,
-                    meta=self.data_meta.tolist(), aspect=self.aspect)
+                    meta=self.data_meta.tolist(), rescale=self.rescale)
 
     def __setstate__(self, state):
         self.__init__(**state)
@@ -138,7 +144,7 @@ class Guide(Iterable):
 
     def save_to(self, f, **kwargs):
         """
-        Serializaes into a text file as JSON.
+        Serializes into a text file as JSON.
 
         Args:
             f (file, str): a file to save to;
@@ -166,33 +172,33 @@ class Guide(Iterable):
         return cls(**data)
 
     @property
-    def m_pending(self) -> numpy.ndarray:
+    def m_pending(self) -> np.ndarray:
         """Mask with points having 'pending' status."""
-        return numpy.where(self.flags == FLAG_PENDING)[0]
+        return np.where(self.flags == FLAG_PENDING)[0]
 
     @property
-    def m_running(self) -> numpy.ndarray:
+    def m_running(self) -> np.ndarray:
         """Indices of points with 'running' status."""
-        return numpy.where(self.flags == FLAG_RUNNING)[0]
+        return np.where(self.flags == FLAG_RUNNING)[0]
 
     @property
-    def m_done(self) -> numpy.ndarray:
+    def m_done(self) -> np.ndarray:
         """Indices of points with 'done' status."""
-        return numpy.where(self.flags == FLAG_DONE)[0]
+        return np.where(self.flags == FLAG_DONE)[0]
 
     @property
-    def __any_nan_mask__(self) -> numpy.ndarray:
-        return numpy.any(numpy.isnan(self.values), axis=-1)
+    def __any_nan_mask__(self) -> np.ndarray:
+        return np.any(np.isnan(self.values), axis=-1)
 
     @property
-    def m_done_numeric(self) -> numpy.ndarray:
+    def m_done_numeric(self) -> np.ndarray:
         """Indices of points with numeric results."""
-        return numpy.where((self.flags == FLAG_DONE) * (numpy.logical_not(self.__any_nan_mask__)))[0]
+        return np.where((self.flags == FLAG_DONE) * (np.logical_not(self.__any_nan_mask__)))[0]
 
     @property
-    def m_done_nan(self) -> numpy.ndarray:
+    def m_done_nan(self) -> np.ndarray:
         """Indices ofpoints with non-numeric results."""
-        return numpy.where((self.flags == FLAG_DONE) * self.__any_nan_mask__)[0]
+        return np.where((self.flags == FLAG_DONE) * self.__any_nan_mask__)[0]
 
     def maybe_triangulate(self):
         """
@@ -204,14 +210,12 @@ class Guide(Iterable):
         """
         if len(self.data) >= 2 ** self.dims:
 
-            if self.aspect == "auto":
+            if self.rescale:
                 coordinates_min = self.coordinates.min(axis=0)
                 coordinates_max = self.coordinates.max(axis=0)
-                coordinates = self.coordinates / ((coordinates_max - coordinates_min)[numpy.newaxis, :])
-            elif self.aspect is None or self.aspect == "none":
-                coordinates = self.coordinates
+                coordinates = self.coordinates / ((coordinates_max - coordinates_min)[np.newaxis, :])
             else:
-                raise ValueError("Unknown aspect: {}".format(self.aspect))
+                coordinates = self.coordinates
 
             if self.dims == 1:
                 self.tri = DSTub1D(coordinates)
@@ -222,11 +226,12 @@ class Guide(Iterable):
             self.tri = None
         return self.tri
 
-    def add(self, *p) -> int:
+    def maybe_add(self, *p, strict=False):
         """
         Adds a new point and triangulates.
         Args:
             p: the point to add;
+            strict (bool): raises an exception if the point is already present;
 
         Returns:
             The index of the point added.
@@ -234,26 +239,33 @@ class Guide(Iterable):
         if not self.dims <= len(p) <= self.dims + self.dims_f + 1:
             raise ValueError("Wrong point data length {:d}, expected {:d} <= len(p) <= {:d}".format(
                 len(p), self.dims, self.dims + self.dims_f + 1))
+        point_location = np.array(p)[:self.dims]
+        delta = np.prod(self.coordinates == point_location[np.newaxis, :], axis=1)
+        if np.any(delta):
+            if strict:
+                raise ValueError(f"The point is already present in the guide.")
+            else:
+                return
         new_value = (self.default_value,) * self.dims_f
         new_flag = FLAG_PENDING,
         new_data_row = new_value + new_flag
         new_data_row = p + new_data_row[len(p) - self.dims:]
-        self.data = numpy.append(
+        self.data = np.append(
             self.data,
             [new_data_row],
             axis=0)
-        self.data_meta = numpy.append(self.data_meta, [None])
+        self.data_meta = np.append(self.data_meta, [None])
         self.maybe_triangulate()
         return len(self.data) - 1
 
     def get_data_limits(self) -> tuple:
         """Computes data limits."""
         return tuple(zip(
-            numpy.min(self.coordinates, axis=0),
-            numpy.max(self.coordinates, axis=0))
+            np.min(self.coordinates, axis=0),
+            np.max(self.coordinates, axis=0))
         )
 
-    def priority(self) -> numpy.ndarray:
+    def priority(self) -> np.ndarray:
         """
         Priority for sampling each of the triangles.
         Returns:
@@ -261,7 +273,7 @@ class Guide(Iterable):
         """
         raise NotImplementedError
 
-    def __simplex_middle__(self, simplex) -> numpy.ndarray:
+    def __simplex_middle__(self, simplex) -> np.ndarray:
         """
         Pick a middle point inside a multidimensional simplex according to
         the rules provided by this object.
@@ -272,12 +284,12 @@ class Guide(Iterable):
         Returns:
             A center point in barycentric coordinates.
         """
-        center = numpy.mean(simplex, axis=0)
-        dst = numpy.linalg.norm(simplex - center[numpy.newaxis, :], axis=-1)
-        mean_dst = numpy.mean(dst)
-        mask = numpy.asanyarray(dst > self.snap_threshold * mean_dst, dtype=float)
+        center = np.mean(simplex, axis=0)
+        dst = np.linalg.norm(simplex - center[np.newaxis, :], axis=-1)
+        mean_dst = np.mean(dst)
+        mask = np.asanyarray(dst > self.snap_threshold * mean_dst, dtype=float)
         if mask.sum() < 2:
-            mask[numpy.argsort(dst)[:-3:-1]] = .5
+            mask[np.argsort(dst)[:-3:-1]] = .5
         else:
             mask /= mask.sum()
         return mask
@@ -305,19 +317,19 @@ class Guide(Iterable):
         priority = self.priority()
 
         # Second, nans
-        nans = numpy.where(numpy.isnan(priority))[0]
+        nans = np.where(np.isnan(priority))[0]
         if len(nans) > 0:
             simplex = self.__choose_from_alternatives__(nans)
         else:
             # Largest volumes otherwise
-            max_priority = numpy.max(priority)
+            max_priority = np.max(priority)
             simplex = self.__choose_from_alternatives__(
-                numpy.where(priority >= max_priority - self.priority_tolerance)[0])
+                np.where(priority >= max_priority - self.priority_tolerance)[0])
         simplex_coordinates = self.coordinates[self.tri.simplices[simplex], :]
         center_bcc = self.__simplex_middle__(simplex_coordinates)
         center_coordinate = center_bcc @ simplex_coordinates
         stub_value = center_bcc @ self.values[self.tri.simplices[simplex], ...]
-        return self.add(*center_coordinate, *stub_value, FLAG_RUNNING)
+        return self.maybe_add(*center_coordinate, *stub_value, FLAG_RUNNING, strict=True)
 
     def __iter__(self):
         return self
@@ -334,7 +346,7 @@ class UniformGuide(Guide):
         """
         return alternatives[0]
 
-    def get_simplex_volumes(self) -> numpy.ndarray:
+    def get_simplex_volumes(self) -> np.ndarray:
         """
         Computes simplex volumes.
 
@@ -343,7 +355,7 @@ class UniformGuide(Guide):
         """
         return simplex_volumes(self.coordinates, self.tri.simplices)
 
-    def priority(self) -> numpy.ndarray:
+    def priority(self) -> np.ndarray:
         """
         Priority for sampling each of the triangles.
         Priorities are simplex volumes in this implementation.
@@ -361,8 +373,7 @@ class CurvatureGuide(UniformGuide):
 
         Args:
             nan_threshold (float): a critical value of NaNs to fallback to uniform sampling;
-            volume_ratio (float): the ratio between the largest volume present and the
-            smallest volume to sample;
+            volume_ratio: the maximal ratio between the largest and the smallest simplex volume;
             args, kwargs: passed to Guide;
         """
         super().__init__(*args, **kwargs)
@@ -383,9 +394,9 @@ class CurvatureGuide(UniformGuide):
         Return:
             A single index of the simplex to sample.
         """
-        return alternatives[numpy.argmax(self.get_simplex_volumes()[alternatives])]
+        return alternatives[np.argmax(self.get_simplex_volumes()[alternatives])]
 
-    def get_curvature(self) -> numpy.ndarray:
+    def get_curvature(self) -> np.ndarray:
         """
         Computes the multidimensional curvature as a simplex
         volume.
@@ -396,12 +407,12 @@ class CurvatureGuide(UniformGuide):
         fns = []
         for i in self.values.T:
             fns.append(simplex_volumes_n(
-                numpy.concatenate((self.coordinates, i[:, numpy.newaxis]), axis=-1),
+                np.concatenate((self.coordinates, i[:, np.newaxis]), axis=-1),
                 self.tri.simplices, *self.tri.vertex_neighbor_vertices,
             ))
-        return numpy.max(fns, axis=0)
+        return np.max(fns, axis=0)
 
-    def priority(self) -> numpy.ndarray:
+    def priority(self) -> np.ndarray:
         """
         Priority for sampling each of the triangles.
         This implementation takes into account local curvature,
@@ -413,7 +424,7 @@ class CurvatureGuide(UniformGuide):
         result = self.get_curvature()
 
         if self.nan_threshold is not None:
-            if numpy.isnan(result).sum() > self.nan_threshold * len(result):
+            if np.isnan(result).sum() > self.nan_threshold * len(result):
                 return self.get_simplex_volumes()
 
         if self.volume_ratio is not None:
@@ -427,6 +438,19 @@ class CurvatureGuide(UniformGuide):
 class PointProcessPool:
     def __init__(self, target, guide, float_regex=r"([-+]?[0-9]+\.?[0-9]*(?:[eEdD][-+]?[0-9]+)?)|(nan)",
                  encoding="utf-8", limit=None, fail_limit=None):
+        """
+        A pool of running processes sampling the parameter space.
+
+        Args:
+            target (str): executable;
+            guide (Guide): the guide suggesting new points to sample;
+            float_regex (str): a regular expression to find float numbers;
+            encoding (str): encoding of the target output stream;
+            limit (int, timedelta, None): a limit to the total count of processes spawned:
+            either total time or total process count;
+            fail_limit (int, None): the total count of processes with non-zero
+            exit codes to accept;
+        """
         self.target = target
         self.guide = guide
         self.compiled_float_regex = re.compile(float_regex)
@@ -440,26 +464,35 @@ class PointProcessPool:
         self.__check_drain__()
 
     @property
-    def failed(self):
+    def failed(self) -> int:
+        """The total count of failed processes with non-zero exit codes."""
         return self.__failed__
 
     @property
-    def succeeded(self):
+    def succeeded(self) -> int:
+        """The total count of succeeded processes with zero exit codes."""
         return self.__succeeded__
 
     @property
     def running(self):
+        """The total count of running processes."""
         return len(self.processes)
 
     @property
     def completed(self):
+        """The total count of completed processes."""
         return self.failed + self.succeeded
 
     @property
     def projected(self):
+        """The total count of completed plus running processes."""
         return self.running + self.completed
 
     def __check_drain__(self):
+        """
+        Check conditions to enter drain mode.
+        Set the corresponding flag if so.
+        """
         if not self.draining:
             if self.fail_limit is not None:
                 if self.failed > self.fail_limit:
@@ -476,7 +509,16 @@ class PointProcessPool:
             else:
                 raise ValueError("Unknown limit object: {}".format(self.limit))
 
-    def new(self, p):
+    def new(self, p) -> bool:
+        """
+        Spawn a new process computing the given point.
+
+        Args:
+            p (numpy.ndarray): the point to compute;
+
+        Returns:
+            True if spawned successfully. False if in drain mode.
+        """
         if not self.draining:
             self.processes.append((p, subprocess.Popen(
                 (self.target,) + tuple(map("{:.12e}".format, self.guide.coordinates[p])),
@@ -488,7 +530,13 @@ class PointProcessPool:
         else:
             return False
 
-    def sweep(self):
+    def sweep(self) -> int:
+        """
+        Collects completed processes.
+
+        Returns:
+            The number of points collected.
+        """
         transaction = []
         for item in self.processes:
             point, process = item
@@ -522,260 +570,108 @@ class PointProcessPool:
         return len(transaction)
 
     @property
-    def safe_to_exit(self):
-        return len(self.processes) == 0
+    def is_safe_to_exit(self) -> bool:
+        """Checks whether it is safe to exit now: no pending processes are present."""
+        return self.running == 0
 
     @property
-    def exit_now(self):
-        return self.draining and self.safe_to_exit
+    def is_finalized(self) -> bool:
+        """Checks whether this run is over: in drain mode with no process left."""
+        return self.draining and self.is_safe_to_exit
 
     def start_drain(self, *args):
-        """Listens for closing event."""
+        """Switch into drain mode."""
         self.draining = True
 
 
-def plot_matrix(n, **kwargs):
+def timestamp():
+    """Current timestep."""
+    return datetime.now().strftime("%Y-%m-%d-%H:%M:%S.%f")
+
+
+def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=None, snap_threshold=0.5, nan_threshold=0.5,
+        volume_ratio=10, rescale=True, save=True, load=None, on_update=None):
     """
-    Creates a plot matrix.
+    Run curious.
+    
     Args:
-        n (int): the number of plots;
-        kwargs: keyword arguments passed to `pyplot.subplots`;
+        target (str): executable;
 
-    Returns:
-        Figure and axes.
+        bounds (tuple): bounds defining the box;
+
+        dims_f (int): the dimensionality of the output (target space);
+
+        verbose (bool): if True, prints verbose output;
+
+        depth (int): the count of parallel runs when sampling;
+
+        fail_limit (int):  the total count of processes with non-zero exit codes to accept;
+
+        limit (int, timedelta, None): a limit to the total count of processes spawned:
+        either total run time or total process count;
+
+        snap_threshold (float): a threshold to snap to triangle/simplex faces;
+
+        nan_threshold (int): the total count of NaNs to accept before entering drain mode;
+
+        volume_ratio: the maximal ratio between the largest and the smallest simplex volume;
+
+        rescale (bool): if True, rescales parameter ranges to a unit box before triangulating;
+        
+        save (str, bool): the location of the JSON data file to save progress to. If True,
+        prepares a new file name out of the timestamp;
+        
+        load (str): the location of the JSON data file to load progress from;
+        
+        on_update (str): executable to run on data updates;
     """
-    n_cols = int(numpy.ceil(n ** .5))
-    n_rows = int(numpy.ceil(n / n_cols))
-    if "squeeze" not in kwargs:
-        kwargs["squeeze"] = False
-    fig, ax = pyplot.subplots(n_rows, n_cols, **kwargs)
-    ax = ax.reshape(-1)
-    return fig, ax
 
+    def v(text, important=False):
+        if verbose or important:
+            print(f"[{timestamp()}] {text}", flush=True)
 
-class PlotView:
-    def __init__(self, guide, target=None, window_close_listener=None, on_plot_update=None, **kwargs):
-        """
-        Plots 1D sampling.
-        Args:
-            guide (Guide): the guide to view;
-            target (str): optional file name to plot to;
-            window_close_listener (Callable): optional listener of plot window close events;
-            on_plot_update (Callable): an optional listener of plot updates;
-            kwargs: keyword arguments to `pyplot.subplots`;
-        """
-        self.guide = guide
-        self.axes_limits = guide.get_data_limits()
-        self.target = target
-        if target:
-            matplotlib.use('agg')
-        self.fig, self.ax = plot_matrix(self.__get_plot_n__(), **kwargs)
-        if self.target is None:
-            pyplot.ion()
-            pyplot.show()
-            if window_close_listener is not None:
-                self.fig.canvas.mpl_connect('close_event', window_close_listener)
+    v("hello")
 
-        self.record_animation = self.target is not None and self.target.endswith(".gif")
-        if self.record_animation:
-            self.animation_data = []
-        else:
-            self.animation_data = None
-        self.on_plot_update = on_plot_update
-
-    def __get_plot_n__(self):
-        return self.guide.dims_f
-
-    def update(self):
-        """Updates the figure."""
-        if self.guide.tri is None:
-            raise ValueError("Triangulation is None")
-
-        for ax in self.ax:
-            ax.clear()
-        self.__plot_main__()
-
-        self.fig.suptitle("Data: {:d} points".format(len(self.guide.values)))
-
-        self.fig.canvas.draw()
-        if self.target is None:
-            self.fig.canvas.flush_events()
-        else:
-            if self.record_animation:
-                if len(self.animation_data) > 0:
-                    imageio.mimsave(self.target, self.animation_data, duration=1)
-            else:
-                pyplot.savefig(self.target)
-
-        if self.on_plot_update is not None:
-            self.on_plot_update(self)
-
-    def __plot_main__(self):
-        raise NotImplementedError
-
-    def __dump_animation__(self):
-        """Dumps animation frame."""
-        data = numpy.frombuffer(self.fig.canvas.tostring_rgb(), dtype='uint8')
-        data = data.reshape(self.fig.canvas.get_width_height()[::-1] + (3,))
-        self.animation_data.append(data)
-
-    def notify_changed(self):
-        """Updates if possible."""
-        if self.guide.tri is not None:
-            self.update()
-            if self.animation_data is not None:
-                self.__dump_animation__()
-
-
-class PlotView1D(PlotView):
-    def __init__(self, guide, **kwargs):
-        if guide.dims != 1:
-            raise ValueError("This view is for 1D->ND functions only")
-        super().__init__(guide, **kwargs)
-
-    def __plot_main__(self):
-        tri = self.guide.tri
-        p = self.guide.coordinates.squeeze()[tri.simplices]
-        coordinates = numpy.squeeze(self.guide.coordinates, axis=-1)
-        for values, ax in zip(self.guide.values.T, self.ax):
-            v = values[tri.simplices]
-            lc = LineCollection(numpy.concatenate((p[..., numpy.newaxis], v[..., numpy.newaxis]), axis=-1))
-            ax.add_collection(lc)
-
-            running = self.guide.m_running
-            if numpy.any(running):
-                ax.scatter(coordinates[running], values[running], facecolors='none', edgecolors="black")
-
-            nan = self.guide.m_done_nan
-            if numpy.any(nan):
-                ax.scatter(coordinates[nan], values[nan], s=10, color="#FF5555", marker="x")
-
-            ax.set_xlim(self.axes_limits[0])
-
-
-class PlotView2D(PlotView):
-    def __init__(self, guide, **kwargs):
-        if guide.dims != 2:
-            raise ValueError("This view is for 2D->ND functions only")
-        super().__init__(guide, **kwargs)
-
-    def __plot_main__(self):
-        for values, ax in zip(self.guide.values.T, self.ax):
-            color_plot = ax.tripcolor(
-                Triangulation(*self.guide.coordinates.T, triangles=self.guide.tri.simplices),
-                values,
-                vmin=numpy.nanmin(self.guide.values),
-                vmax=numpy.nanmax(self.guide.values),
-            )
-
-            # if self.color_bar is True:
-            #     self.color_bar = pyplot.colorbar(color_plot)
-            # elif self.color_bar in (False, None):
-            #     pass
-            # else:
-            #     self.color_bar.on_mappable_changed(color_plot)
-
-            # valid = self.guide.coordinates[self.guide.m_done_numeric, :]
-            # if len(valid) > 0:
-            #     ax.scatter(*valid.T, color="white")
-
-            running = self.guide.coordinates[self.guide.m_running, :]
-            if len(running) > 0:
-                ax.scatter(*running.T, facecolors='none', edgecolors="white")
-
-            nan = self.guide.coordinates[self.guide.m_done_nan, :]
-            if len(nan) > 0:
-                ax.scatter(*nan.T, s=10, color="#FF5555", marker="x")
-
-
-            ax.set_xlim(self.axes_limits[0])
-            ax.set_ylim(self.axes_limits[1])
-
-
-class PlotViewProj2D(PlotView):
-    def __get_plot_n__(self):
-        return self.guide.dims_f * self.guide.dims * (self.guide.dims - 1) / 2
-
-    def __plot_main__(self):
-        for ax, ((i_x, i_y), i_v) in zip(self.ax, product(
-                combinations(numpy.arange(self.guide.dims), 2),
-                numpy.arange(self.guide.dims_f),
-        )):
-            x = self.guide.coordinates[:, i_x]
-            y = self.guide.coordinates[:, i_y]
-            v = self.guide.values[:, i_v]
-            for mask, kw in (
-                (self.guide.m_done_numeric, dict(c=v[self.guide.m_done_numeric])),
-                (self.guide.m_running, dict(facecolors='none', edgecolors="black")),
-                (self.guide.m_done_nan, dict(color="#FF5555", marker="x")),
-            ):
-                ax.scatter(x[mask], y[mask], **kw)
-
-            ax.set_xlim(self.axes_limits[i_x])
-            ax.set_ylim(self.axes_limits[i_y])
-            ax.set_xlabel(f"x[{i_x}]")
-            ax.set_ylabel(f"x[{i_y}]")
-            ax.set_title(f"f(x)[{i_v}]")
-
-
-def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, plot=False,
-        snap_threshold=0.5, nan_threshold=0.5, volume_ratio=10, aspect="auto", save=True, load=None,
-        on_plot_update=None):
-
-    def v(*args, **kwargs):
-        if verbose:
-            print(*args, **kwargs)
-
-    if on_plot_update is not None:
-        def on_plot_update_fun(plotter):
-            subprocess.Popen(on_plot_update, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+    if on_update is not None:
+        def on_plot_update_fun():
+            subprocess.Popen(on_update, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     else:
-        on_plot_update_fun = None
+        def on_plot_update_fun():
+            pass
 
     if load is not None:
-        v("Loading from {} ...".format(load))
+        v(f"Loading from '{load}' ...")
         with open(load, 'r') as f:
-            guide = (UniformGuide if n == 0 else CurvatureGuide).from_json(json.load(f))
+            guide = (UniformGuide if dims_f == 0 else CurvatureGuide).from_json(json.load(f))
+        # Update the guide with the new parameters
+        guide.set_bounds(bounds)
     else:
-        if n == 0:
-            guide = UniformGuide.from_bounds(
-                ranges, snap_threshold=snap_threshold, dims_f=n, aspect=aspect,
-            )
+        if dims_f == 0:
+            guide = UniformGuide.from_bounds(bounds, snap_threshold=snap_threshold, dims_f=dims_f, rescale=rescale)
         else:
-            guide = CurvatureGuide.from_bounds(
-                ranges, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
-                volume_ratio=volume_ratio, dims_f=n, aspect=aspect,
-            )
+            guide = CurvatureGuide.from_bounds(bounds, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
+                                               volume_ratio=volume_ratio, dims_f=dims_f, rescale=rescale)
 
     if save not in (None, False):
         if save is True:
             data_folder = Path(".curious")
-            save = data_folder / datetime.now().strftime("%Y-%m-%d-%H:%M:%S:%f.json")
+            save = data_folder / timestamp() / ".json"
         else:
             save = Path(save)
             data_folder = save.parent
 
         if not data_folder.exists():
-            v("Creating data folder {} ...".format(data_folder))
+            v(f"Creating data folder '{data_folder}' ...")
             os.mkdir(data_folder)
 
         if not data_folder.is_dir():
-            print("Not a folder: {}".format(data_folder), file=sys.stderr)
-            return 1
+            raise RuntimeError(f"Not a folder: {data_folder}")
 
-    ppp = PointProcessPool(target, guide, limit=limit, fail_limit=max_fails)
+    ppp = PointProcessPool(target, guide, limit=limit, fail_limit=fail_limit)
 
-    v("Hello")
+    on_plot_update_fun()
 
-    if plot is not False:
-        plot_view = {1: PlotView1D, 2: PlotView2D}.get(guide.dims, PlotViewProj2D)(
-            guide, target=plot, window_close_listener=ppp.start_drain, on_plot_update=on_plot_update_fun)
-        plot_view.notify_changed()
-
-    else:
-        plot_view = None
-
-    while not ppp.exit_now:
+    while not ppp.is_finalized:
 
         try:
             # Collect the data
@@ -792,10 +688,9 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
                     break
 
             if swept or spawned:
-                if plot_view is not None:
-                    plot_view.notify_changed()
-                v("Running: {:d} (+{:d} -{:d}) \tcompleted: {:d}[{:d}] ({:d} fails) \t{}".format(
-                    ppp.running, spawned, swept, ppp.completed, len(guide.m_done), ppp.failed, "DRAIN" if ppp.draining else ""))
+                v(f"Running: {ppp.running} (+{spawned} -{swept}) \tcompleted: {ppp.completed}[{len(guide.m_done)}] "
+                  f"({ppp.failed} fails) \t{'DRAIN' if ppp.draining else ''}")
+                on_plot_update_fun()
                 if save:
                     guide.save_to(save)
 
@@ -805,16 +700,16 @@ def run(target, ranges, n=1, verbose=False, depth=1, max_fails=0, limit=None, pl
             if ppp.draining:
                 raise
             else:
-                print("Ctrl-C caught: finalizing ...")
+                v("Ctrl-C caught: finalizing ...", important=True)
                 ppp.start_drain()
 
-    v("Done")
+    v("bye")
 
     return ppp.failed > ppp.fail_limit
 
 
 if __name__ == "__main__":
-    def l2s(limit):
+    def l2s(limit) -> str:
         """
         Converts limit into string.
         Args:
@@ -873,48 +768,43 @@ if __name__ == "__main__":
     parser.add_argument("ranges", help="ranges to sample", metavar="X Y, A B, ...", type=str)
 
     parser.add_argument("-v", "--verbose", action="store_true", help="verbose output")
-    parser.add_argument("-n", help="the number of target cost functions", metavar="N", type=int, default=defaults["n"])
+    parser.add_argument("-n", help="the number of target cost functions", metavar="N", type=int, default=defaults["dims_f"])
     parser.add_argument("-d", "--depth", help="the number of simultaneous evaluations", metavar="N", type=int,
                         default=defaults["depth"])
-    parser.add_argument("-f", "--max-fails", help="the maximal number of failures before exiting", metavar="N",
-                        type=int, default=defaults["max_fails"])
+    parser.add_argument("-f", "--fail-limit", help="the maximal number of failures before exiting", metavar="N",
+                        type=int, default=defaults["fail_limit"])
     parser.add_argument("-l", "--limit", help="the stop condition: 'none' (runs infinitely), "
                                               "'time:DD:HH:MM:SS' (time limit), "
                                               "'eval:N' (the total number of evaluations)",
                         metavar="LIMIT", type=str, default=l2s(defaults["limit"]))
-    parser.add_argument("--plot", help="make a status plot", metavar="[FILENAME]", type=str, nargs="?",
-                        default=defaults["plot"])
     parser.add_argument("--snap-threshold", help="a threshold to snap points to faces", metavar="FLOAT", type=float,
                         default=defaults["snap_threshold"])
     parser.add_argument("--nan-threshold", help="a critical ratio of nans to fallback to uniform sampling",
                         metavar="FLOAT", type=float, default=defaults["nan_threshold"])
     parser.add_argument("--volume-ratio", help="the largest-to-smallest volume ratio to keep",
                         metavar="FLOAT", type=float, default=defaults["volume_ratio"])
-    parser.add_argument("--aspect", choices=["none", "auto"], help="adjust aspect ratio when triangulating",
-                        default=defaults["aspect"])
+    parser.add_argument("--no-rescale", help="triangulate as-is without rescaling axes", action="store_true")
     parser.add_argument("--no-io", help="do not save progress", action="store_true")
     parser.add_argument("--save", help="save progress to a file (overrides --no-io)", metavar="FILENAME", type=str,
                         default=defaults["save"])
     parser.add_argument("--load", help="loads a previous calculation", metavar="FILENAME", type=str,
                         default=defaults["load"])
-    parser.add_argument("--on-plot-update", help="runs a command after updating progress plot", metavar="COMMAND",
-                        type=str, default=defaults["on_plot_update"])
+    parser.add_argument("--on-update", help="update hook", metavar="COMMAND", type=str, default=defaults["on_update"])
     options = parser.parse_args()
 
     exit(run(
         target=options.target,
-        ranges=s2r(options.ranges),
-        n=options.n,
+        bounds=s2r(options.ranges),
+        dims_f=options.n,
         verbose=options.verbose,
         depth=options.depth,
-        max_fails=options.max_fails,
+        fail_limit=options.fail_limit,
         limit=s2l(options.limit),
-        plot=options.plot,
         snap_threshold=options.snap_threshold,
         nan_threshold=options.nan_threshold,
         volume_ratio=options.volume_ratio,
-        aspect=options.aspect,
+        rescale=options.no_rescale,
         save=options.save if options.save is not True else not options.no_io,
         load=options.load,
-        on_plot_update=options.on_plot_update,
+        on_update=options.on_update,
     ))

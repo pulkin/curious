@@ -1,5 +1,4 @@
 from unittest import TestCase
-import matplotlib
 
 import sys
 import os
@@ -9,7 +8,6 @@ import tempfile
 import json
 import numpy
 import time
-import imageio
 
 
 class TestScript(TestCase):
@@ -144,7 +142,7 @@ class TestScript(TestCase):
     def test_max_fails(self):
         with self.assertRaises(RuntimeError):
             self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:1')
-        data = self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--max-fails", "5")
+        data = self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--fail-limit", "5")
         self.assertEqual(data["dims"], 2)
         numpy.testing.assert_almost_equal(data["points"], [
             [-1.0, -1.0, 0, 1.0], [-1.0, 1.0, 0, 1.0],
@@ -155,18 +153,7 @@ class TestScript(TestCase):
         self.assertEqual(data["nan_threshold"], 0.5)
         self.assertEqual(data["volume_ratio"], 10)
         with self.assertRaises(RuntimeError):
-            self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--max-fails", "4")
-
-    def test_gif(self):
-        size_inches = matplotlib.rcParams["figure.figsize"]
-        dpi = matplotlib.rcParams["figure.dpi"]
-        fl = tempfile.mkstemp(suffix=".gif")[1]
-        self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', fl, ignore_warnings=True)
-        self.assertTrue(os.path.isfile(fl))
-        data = imageio.mimread(fl)
-        self.assertEqual(len(data), 6)
-        for i in data:
-            self.assertEqual(i.shape, (int(size_inches[1] * dpi), int(size_inches[0] * dpi), 4))
+            self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--fail-limit", "4")
 
     def test_tweaks(self):
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--snap-threshold", "0")
@@ -200,7 +187,7 @@ class TestScript(TestCase):
         def f2(x):
             return numpy.exp(-(x + 0.5) ** 2) / 2
 
-        data = self.run_curious("5_1d_2d_gaussian.py", '-1 1', '-l', 'eval:5', '--plot', '-n', '2')
+        data = self.run_curious("5_1d_2d_gaussian.py", '-1 1', '-l', 'eval:5', '-n', '2')
         self.assertEqual(data["dims"], 1)
         self.assertEqual(data["dims_f"], 2)
         numpy.testing.assert_equal(numpy.array(data["points"]), [
@@ -212,4 +199,8 @@ class TestScript(TestCase):
         ])
 
     def test_two_parameter_two_component(self):
-        self.run_curious("6_nd_2d_two_features.py", '-1 1, -1 1', '-l', 'eval:5', '--plot', '-n', '2')
+        self.run_curious("6_nd_2d_two_features.py", '-1 1, -1 1', '-l', 'eval:5', '-n', '2')
+
+    def test_on_plot_update(self):
+        result = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:30', '--on-update',
+                                  'echo "Hello!"', '-v', debug=True)
