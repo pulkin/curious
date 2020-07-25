@@ -31,12 +31,18 @@ FLAG_DONE = 2
 
 class DSTub1D:
     def __init__(self, coordinates):
+        """
+        A replica of `Delaunay` triangulation in 1D.
+
+        Args:
+            coordinates (numpy.ndarray): a plain vector with 1D coordinates.
+        """
         # Points
         self.points = coordinates
 
         # Simplices
         order = numpy.argsort(coordinates[:, 0]).astype(numpy.int32)
-        self.simplices = numpy.concatenate((order[:-1, numpy.newaxis], order[1:,numpy.newaxis]), axis=-1)
+        self.simplices = numpy.concatenate((order[:-1, numpy.newaxis], order[1:, numpy.newaxis]), axis=-1)
 
         # Neighbours
         left_right = numpy.full(len(order) + 2, -1, dtype=numpy.int32)
@@ -54,9 +60,10 @@ class Guide(Iterable):
                  priority_tolerance=None, meta=None, aspect="auto"):
         """
         Guides the sampling.
+
         Args:
-            dims (int): the dimensionality of the parameter space;
-            dims_f (int): the dimensionality of the target cost function space;
+            dims (int): the dimensionality of the parameter space to sample;
+            dims_f (int): the dimensionality of the output;
             points (Iterable): data points;
             snap_threshold (float): a threshold to snap to triangle/simplex faces;
             default_value (float): default value to assign to input points;
@@ -102,72 +109,99 @@ class Guide(Iterable):
         return cls(len(bounds), points=product(*bounds), **kwargs)
 
     @property
-    def coordinates(self):
+    def coordinates(self) -> numpy.ndarray:
         return self.data[:, :self.dims]
 
     @property
-    def values(self):
+    def values(self) -> numpy.ndarray:
         return self.data[:, self.dims:self.dims + self.dims_f]
 
     @property
-    def flags(self):
+    def flags(self) -> numpy.ndarray:
         return self.data[:, -1]
 
-    def __getstate__(self):
+    def __getstate__(self) -> dict:
         return dict(dims=self.dims, dims_f=self.dims_f, points=self.data.tolist(), snap_threshold=self.snap_threshold,
                     default_value=self.default_value, priority_tolerance=self.priority_tolerance,
-                    meta=self.data_meta.tolist())
+                    meta=self.data_meta.tolist(), aspect=self.aspect)
 
     def __setstate__(self, state):
         self.__init__(**state)
 
     def to_json(self):
-        """To json representation"""
+        """
+        Serializes to JSON-compatible dict.
+        Returns:
+            A dict with parameters.
+        """
         return self.__getstate__()
 
-    def save_to(self, f):
-        """Saves to a file"""
+    def save_to(self, f, **kwargs):
+        """
+        Serializaes into a text file as JSON.
+
+        Args:
+            f (file, str): a file to save to;
+            **kwargs: arguments to `json.dump`;
+        """
+        def_kwargs = dict(indent=2)
+        def_kwargs.update(kwargs)
         if isinstance(f, (str, Path)):
             with open(f, 'w') as _f:
-                json.dump(self.to_json(), _f, indent=2)
+                json.dump(self.to_json(), _f, **def_kwargs)
         else:
-            json.dump(self.to_json(), f, indent=2)
+            json.dump(self.to_json(), f, **def_kwargs)
 
     @classmethod
     def from_json(cls, data):
-        """Object from json representation"""
+        """
+        Restores from JSON data.
+
+        Args:
+            data (dict): the serialized data;
+
+        Returns:
+            A new Guide.
+        """
         return cls(**data)
 
     @property
-    def m_pending(self):
-        """Pending points to process"""
+    def m_pending(self) -> numpy.ndarray:
+        """Mask with points having 'pending' status."""
         return numpy.where(self.flags == FLAG_PENDING)[0]
 
     @property
-    def m_running(self):
+    def m_running(self) -> numpy.ndarray:
+        """Indices of points with 'running' status."""
         return numpy.where(self.flags == FLAG_RUNNING)[0]
 
     @property
-    def m_done(self):
-        """Pending points to process"""
+    def m_done(self) -> numpy.ndarray:
+        """Indices of points with 'done' status."""
         return numpy.where(self.flags == FLAG_DONE)[0]
 
     @property
-    def __any_nan_mask__(self):
+    def __any_nan_mask__(self) -> numpy.ndarray:
         return numpy.any(numpy.isnan(self.values), axis=-1)
 
     @property
-    def m_done_numeric(self):
-        """Final points with numeric values"""
+    def m_done_numeric(self) -> numpy.ndarray:
+        """Indices of points with numeric results."""
         return numpy.where((self.flags == FLAG_DONE) * (numpy.logical_not(self.__any_nan_mask__)))[0]
 
     @property
-    def m_done_nan(self):
-        """Final points with numeric values"""
+    def m_done_nan(self) -> numpy.ndarray:
+        """Indices ofpoints with non-numeric results."""
         return numpy.where((self.flags == FLAG_DONE) * self.__any_nan_mask__)[0]
 
     def maybe_triangulate(self):
-        """Computes a new triangulation"""
+        """
+        Prepares a new triangulation.
+
+        Returns:
+            Tbe new triangulation stored in `self.tri` or None if no
+            triangulation possible.
+        """
         if len(self.data) >= 2 ** self.dims:
 
             if self.aspect == "auto":
@@ -188,11 +222,11 @@ class Guide(Iterable):
             self.tri = None
         return self.tri
 
-    def add(self, *p):
+    def add(self, *p) -> int:
         """
         Adds a new point and triangulates.
         Args:
-            p (tuple): the point to add;
+            p: the point to add;
 
         Returns:
             The index of the point added.
@@ -200,22 +234,26 @@ class Guide(Iterable):
         if not self.dims <= len(p) <= self.dims + self.dims_f + 1:
             raise ValueError("Wrong point data length {:d}, expected {:d} <= len(p) <= {:d}".format(
                 len(p), self.dims, self.dims + self.dims_f + 1))
+        new_value = (self.default_value,) * self.dims_f
+        new_flag = FLAG_PENDING,
+        new_data_row = new_value + new_flag
+        new_data_row = p + new_data_row[len(p) - self.dims:]
         self.data = numpy.append(
             self.data,
-            [tuple(p) + ((self.default_value,) * self.dims_f + (FLAG_PENDING,))[len(p) - self.dims:]],
+            [new_data_row],
             axis=0)
         self.data_meta = numpy.append(self.data_meta, [None])
         self.maybe_triangulate()
         return len(self.data) - 1
 
-    def get_lims(self):
-        """Data limits"""
+    def get_data_limits(self) -> tuple:
+        """Computes data limits."""
         return tuple(zip(
             numpy.min(self.coordinates, axis=0),
             numpy.max(self.coordinates, axis=0))
         )
 
-    def priority(self):
+    def priority(self) -> numpy.ndarray:
         """
         Priority for sampling each of the triangles.
         Returns:
@@ -223,10 +261,11 @@ class Guide(Iterable):
         """
         raise NotImplementedError
 
-    def __center__(self, simplex):
+    def __simplex_middle__(self, simplex) -> numpy.ndarray:
         """
-        This function picks a 'center' point in a triangle/simplex. It also prevents triangulation
-        from squeezing at borders.
+        Pick a middle point inside a multidimensional simplex according to
+        the rules provided by this object.
+
         Args:
             simplex (numpy.array): simplex points;
 
@@ -243,20 +282,28 @@ class Guide(Iterable):
             mask /= mask.sum()
         return mask
 
-    def __choose_from_alternatives__(self, alternatives):
+    def __choose_from_alternatives__(self, alternatives) -> int:
+        """
+        Choose from indices of alternative simplexes to sample.
+
+        Return:
+            A single index of the simplex to sample.
+        """
         raise NotImplementedError
 
     def __next__(self):
-        """Picks a next point index to compute based on priority."""
-        # First, preset points
+        """Sample another point."""
+        # First, pick points that are pending.
         for i in self.m_pending:
             self.flags[i] = FLAG_RUNNING
             return i
 
+        # Do nothing if not triangulated
         if self.tri is None:
             raise StopIteration
 
         priority = self.priority()
+
         # Second, nans
         nans = numpy.where(numpy.isnan(priority))[0]
         if len(nans) > 0:
@@ -267,7 +314,7 @@ class Guide(Iterable):
             simplex = self.__choose_from_alternatives__(
                 numpy.where(priority >= max_priority - self.priority_tolerance)[0])
         simplex_coordinates = self.coordinates[self.tri.simplices[simplex], :]
-        center_bcc = self.__center__(simplex_coordinates)
+        center_bcc = self.__simplex_middle__(simplex_coordinates)
         center_coordinate = center_bcc @ simplex_coordinates
         stub_value = center_bcc @ self.values[self.tri.simplices[simplex], ...]
         return self.add(*center_coordinate, *stub_value, FLAG_RUNNING)
@@ -277,15 +324,33 @@ class Guide(Iterable):
 
 
 class UniformGuide(Guide):
-    def __choose_from_alternatives__(self, alternatives):
+    def __choose_from_alternatives__(self, alternatives) -> int:
+        """
+        Choose from indices of alternative simplexes to sample.
+        This implementation simply picks the first index.
+
+        Return:
+            A single index of the simplex to sample.
+        """
         return alternatives[0]
 
-    def get_simplex_volumes(self):
-        """Calculates simplexes' volumes"""
+    def get_simplex_volumes(self) -> numpy.ndarray:
+        """
+        Computes simplex volumes.
+
+        Returns:
+            A plain array with volumes.
+        """
         return simplex_volumes(self.coordinates, self.tri.simplices)
 
-    def priority(self):
-        """Calculates priority for sampling of each triangle"""
+    def priority(self) -> numpy.ndarray:
+        """
+        Priority for sampling each of the triangles.
+        Priorities are simplex volumes in this implementation.
+
+        Returns:
+            An array with priorities: arbitrary real numbers.
+        """
         return self.get_simplex_volumes()
 
 
@@ -293,6 +358,7 @@ class CurvatureGuide(UniformGuide):
     def __init__(self, *args, nan_threshold=None, volume_ratio=None, **kwargs):
         """
         Guides the sampling.
+
         Args:
             nan_threshold (float): a critical value of NaNs to fallback to uniform sampling;
             volume_ratio (float): the ratio between the largest volume present and the
@@ -303,17 +369,30 @@ class CurvatureGuide(UniformGuide):
         self.nan_threshold = nan_threshold
         self.volume_ratio = volume_ratio
 
-    def __getstate__(self):
+    def __getstate__(self) -> dict:
         return {**super().__getstate__(), **dict(
             nan_threshold=self.nan_threshold,
             volume_ratio=self.volume_ratio,
         )}
 
-    def __choose_from_alternatives__(self, alternatives):
+    def __choose_from_alternatives__(self, alternatives) -> int:
+        """
+        Choose from indices of alternative simplexes to sample.
+        This implementation picks the largest-volume alternative.
+
+        Return:
+            A single index of the simplex to sample.
+        """
         return alternatives[numpy.argmax(self.get_simplex_volumes()[alternatives])]
 
-    def get_curvature_measure(self):
-        """Calculates the measure of curvature"""
+    def get_curvature(self) -> numpy.ndarray:
+        """
+        Computes the multidimensional curvature as a simplex
+        volume.
+
+        Returns:
+            The curvature measure as a plain array.
+        """
         fns = []
         for i in self.values.T:
             fns.append(simplex_volumes_n(
@@ -322,9 +401,16 @@ class CurvatureGuide(UniformGuide):
             ))
         return numpy.max(fns, axis=0)
 
-    def priority(self):
-        """Calculates priority for sampling of each triangle"""
-        result = self.get_curvature_measure()
+    def priority(self) -> numpy.ndarray:
+        """
+        Priority for sampling each of the triangles.
+        This implementation takes into account local curvature,
+        simplex volumes and the amount of NaNs in the data.
+
+        Returns:
+            An array with priorities.
+        """
+        result = self.get_curvature()
 
         if self.nan_threshold is not None:
             if numpy.isnan(result).sum() > self.nan_threshold * len(result):
@@ -355,7 +441,6 @@ class PointProcessPool:
 
     @property
     def failed(self):
-        """Failed runs"""
         return self.__failed__
 
     @property
@@ -480,7 +565,7 @@ class PlotView:
             kwargs: keyword arguments to `pyplot.subplots`;
         """
         self.guide = guide
-        self.axes_limits = guide.get_lims()
+        self.axes_limits = guide.get_data_limits()
         self.target = target
         if target:
             matplotlib.use('agg')
