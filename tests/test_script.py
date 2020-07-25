@@ -223,4 +223,4 @@ class TestScript(TestCase):
 
     def test_on_plot_update(self):
         result = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:30', '--on-update',
-                                  'echo "Hello!"', '-v', debug=True)
+                                  'cat', '-v', debug=True)

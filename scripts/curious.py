@@ -633,10 +633,12 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
     v("hello")
 
     if on_update is not None:
-        def on_plot_update_fun():
-            subprocess.Popen(on_update, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        def on_plot_update_fun(guide):
+            p = subprocess.Popen(on_update, stdin=subprocess.PIPE, shell=True, encoding="utf-8")
+            p.stdin.write(json.dumps(guide.to_json()))
+            p.stdin.close()
     else:
-        def on_plot_update_fun():
+        def on_plot_update_fun(guide):
             pass
 
     if load is not None:
@@ -676,7 +678,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
 
     ppp = PointProcessPool(target, guide, limit=limit, fail_limit=fail_limit)
 
-    on_plot_update_fun()
+    on_plot_update_fun(guide)
 
     while not ppp.is_finalized:
 
@@ -697,7 +699,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
             if swept or spawned:
                 v(f"Running: {ppp.running} (+{spawned} -{swept}) \tcompleted: {ppp.completed}[{len(guide.m_done)}] "
                   f"({ppp.failed} fails) \t{'DRAIN' if ppp.draining else ''}")
-                on_plot_update_fun()
+                on_plot_update_fun(guide)
                 if save:
                     guide.save_to(save)
 
