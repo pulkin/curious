@@ -4,6 +4,7 @@ from cutil import simplex_volumes, simplex_volumes_n
 import numpy as np
 from scipy.spatial import Delaunay
 
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from itertools import product
 from collections.abc import Iterable
 import argparse
@@ -17,11 +18,16 @@ from pathlib import Path
 import json
 import time
 import signal
+import random
+import string
 
 
 FLAG_PENDING = 0
 FLAG_RUNNING = 1
 FLAG_DONE = 2
+
+MIN_PORT = 9911
+MAX_PORT = 9926
 
 
 class DSTub1D:
@@ -590,7 +596,7 @@ def timestamp():
 
 
 def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=None, snap_threshold=0.5, nan_threshold=0.5,
-        volume_ratio=10, rescale=True, save=True, load=None, on_update=None):
+        volume_ratio=10, rescale=True, save=True, load=None, on_update=None, listen=True):
     """
     Run curious.
     
@@ -624,6 +630,8 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
         load (str): the location of the JSON data file to load progress from;
         
         on_update (str): executable to run on data updates;
+
+        listen (bool): creates a file to listen to interact through;
     """
 
     def v(text, important=False):
@@ -664,6 +672,63 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
             guide = CurvatureGuide.from_bounds(bounds, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
                                                volume_ratio=volume_ratio, dims_f=dims_f, rescale=rescale)
 
+    if listen:
+
+        class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                nonlocal depth
+
+                try:
+                    path = self.path[1:]
+                    if path[:len(secret)] != secret:
+                        self.send_response(401)
+                        self.end_headers()
+                        self.wfile.write(f"Not authorized".encode("utf-8"))
+                        return
+
+                    path = path[len(secret):]
+                    key, value = path.split("=")
+
+                    if key == "depth":
+                        depth = int(value)
+                    elif key == "bounds":
+                        guide.set_bounds(s2l(value))
+                    elif key == "snap-threshold":
+                        guide.snap_threshold = float(value)
+                    elif key == "rescale":
+                        guide.rescale = bool(value)
+                    elif isinstance(guide, CurvatureGuide):
+                        if key == "nan-threshold":
+                            guide.nan_threshold = float(value)
+                        elif key == "volume-ratio":
+                            guide.volume_ratio = float(value)
+                        else:
+                            raise KeyError(f"Unknown key for CurvatureGuide {repr(key)}")
+                    else:
+                        raise KeyError(f"Unknown key {repr(key)}")
+
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(f"{key}={value}".encode("utf-8"))
+
+                except Exception as _e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(str(_e).encode('utf-8'))
+
+        secret = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+
+        for port in range(MIN_PORT, MAX_PORT + 1):
+            try:
+                httpd = HTTPServer(('localhost', port), SimpleHTTPRequestHandler)
+                httpd.timeout = 0
+            except OSError as e:
+                if e.errno == 98:  # already in use
+                    continue
+            else:
+                break
+        v(f"Listening for localhost:{port} secret {secret}", important=True)
+
     if save not in (None, False):
         if save is True:
             data_folder = Path(".curious")
@@ -686,6 +751,8 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
     while not ppp.is_finalized:
 
         try:
+            if listen:
+                httpd.handle_request()
             # Collect the data
             swept = ppp.sweep()
 
@@ -706,7 +773,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
                 if save:
                     guide.save_to(save)
 
-            time.sleep(0.1)
+            time.sleep(1)
 
         except KeyboardInterrupt:
             if ppp.draining:
