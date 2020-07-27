@@ -310,8 +310,8 @@ class Guide(Iterable):
         """
         center = np.mean(simplex, axis=0)
         dst = np.linalg.norm(simplex - center[np.newaxis, :], axis=-1)
-        mean_dst = np.mean(dst)
-        mask = np.asanyarray(dst > self.snap_threshold * mean_dst, dtype=float)
+        max_dst = dst.max()
+        mask = np.asanyarray(dst > self.snap_threshold * max_dst, dtype=float)
         if mask.sum() < 2:
             mask[np.argsort(dst)[:-3:-1]] = .5
         else:
