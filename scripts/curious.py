@@ -476,7 +476,7 @@ class CurvatureGuide(UniformGuide):
 
 class PointProcessPool:
     def __init__(self, target, guide, float_regex=r"([-+]?[0-9]+\.?[0-9]*(?:[eEdD][-+]?[0-9]+)?)|(nan)",
-                 encoding="utf-8", limit=None, fail_limit=None):
+                 encoding="utf-8", limit=None, fail_limit=None, force_collect=False):
         """
         A pool of running processes sampling the parameter space.
 
@@ -489,6 +489,7 @@ class PointProcessPool:
             either total time or total process count;
             fail_limit (int, None): the total count of processes with non-zero
             exit codes to accept;
+            force_collect (bool): if True, collects data for non-zero exit codes;
         """
         self.target = target
         self.guide = guide
@@ -500,6 +501,7 @@ class PointProcessPool:
         self.limit = limit
         self.fail_limit = fail_limit
         self.start_time = datetime.now()
+        self.force_collect = force_collect
         self.__check_drain__()
 
     @property
@@ -594,7 +596,8 @@ class PointProcessPool:
                 if len(matches) >= self.guide.dims_f:
                     if self.guide.dims_f > 0:
                         self.guide.values[point] = tuple(map(float, matches[-self.guide.dims_f:]))
-                    self.guide.data_meta[point] = (out, err)
+                    if not process.returncode or self.force_collect:
+                        self.guide.data_meta[point] = (out, err)
                     if process.returncode:
                         self.__failed__ += 1
                     else:
@@ -631,7 +634,7 @@ def timestamp():
 
 
 def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=None, snap_threshold=0.5, nan_threshold=0.5,
-        volume_ratio=10, rescale=True, save=True, load=None, on_update=None, listen=True):
+        volume_ratio=10, rescale=True, save=True, load=None, on_update=None, web_server=False, force_collect=False):
     """
     Run curious.
     
@@ -666,7 +669,9 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
         
         on_update (str): executable to run on data updates;
 
-        listen (bool): creates a file to listen to interact through;
+        web_server (bool): creates a web server for runtime interaction;
+
+        force_collect (bool): if True, collects data for non-zero exit codes;
     """
 
     def v(text, important=False):
@@ -707,7 +712,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
             guide = CurvatureGuide.from_bounds(bounds, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
                                                volume_ratio=volume_ratio, dims_f=dims_f, rescale=rescale)
 
-    if listen:
+    if web_server:
 
         class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -773,14 +778,14 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
         if not data_folder.is_dir():
             raise RuntimeError(f"Not a folder: {data_folder}")
 
-    ppp = PointProcessPool(target, guide, limit=limit, fail_limit=fail_limit)
+    ppp = PointProcessPool(target, guide, limit=limit, fail_limit=fail_limit, force_collect=force_collect)
 
     on_plot_update_fun(guide)
 
     while not ppp.is_finalized:
 
         try:
-            if listen:
+            if web_server:
                 httpd.handle_request()
             # Collect the data
             swept = ppp.sweep()
@@ -802,7 +807,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
                 if save:
                     guide.save_to(save)
 
-            time.sleep(1)
+            time.sleep(0.1)
 
         except KeyboardInterrupt:
             if ppp.draining:
@@ -898,6 +903,9 @@ if __name__ == "__main__":
     parser.add_argument("--load", help="loads a previous calculation", metavar="FILENAME", type=str,
                         default=defaults["load"])
     parser.add_argument("--on-update", help="update hook", metavar="COMMAND", type=str, default=defaults["on_update"])
+    parser.add_argument("--web-server", help="creates a web server to listen during runtime", action="store_true")
+    parser.add_argument("--force-collect", help="collect data from non-zero exit codes", action="store_true")
+
     options = parser.parse_args()
 
     exit(run(
@@ -915,4 +923,6 @@ if __name__ == "__main__":
         save=options.save if options.save is not True else not options.no_io,
         load=options.load,
         on_update=options.on_update,
+        web_server=options.web_server,
+        force_collect=options.force_collect,
     ))

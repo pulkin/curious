@@ -145,9 +145,9 @@ class TestScript(TestCase):
         data = self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--fail-limit", "5")
         self.assertEqual(data["dims"], 2)
         numpy.testing.assert_almost_equal(data["points"], [
-            [-1.0, -1.0, 0, 1.0], [-1.0, 1.0, 0, 1.0],
-            [1.0, -1.0, 0, 1.0], [1.0, 1.0, 0, 1.0],
-            [-1./3, 1./3, 0, 1.0],
+            [-1.0, -1.0, 0, 2.0], [-1.0, 1.0, 0, 2.0],
+            [1.0, -1.0, 0, 2.0], [1.0, 1.0, 0, 2.0],
+            [-1./3, 1./3, 0, 2.0],
         ])
         self.assertEqual(data["snap_threshold"], 0.5)
         self.assertEqual(data["nan_threshold"], 0.5)
