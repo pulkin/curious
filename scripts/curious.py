@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial import Delaunay
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 from itertools import product
 from collections.abc import Iterable
 import argparse
@@ -119,6 +120,23 @@ class Guide(Iterable):
             A new guide.
         """
         return cls(len(bounds), points=product(*bounds), **kwargs)
+
+    def set_prop(self, name, value):
+        """
+        Sets a property.
+
+        Args:
+            name (str): property name;
+            value (str): property value;
+        """
+        if name == "bounds":
+            self.set_bounds(s2r(value))
+        elif name == "snap-threshold":
+            self.snap_threshold = float(value)
+        elif name == "rescale":
+            self.rescale = bool(value)
+        else:
+            raise KeyError(f"Unknown property to set {repr(name)}")
 
     @property
     def coordinates(self) -> np.ndarray:
@@ -385,6 +403,21 @@ class CurvatureGuide(UniformGuide):
         super().__init__(*args, **kwargs)
         self.nan_threshold = nan_threshold
         self.volume_ratio = volume_ratio
+
+    def set_prop(self, name, value):
+        """
+        Sets a property.
+
+        Args:
+            name (str): property name;
+            value (str): property value;
+        """
+        if name == "nan-threshold":
+            self.nan_threshold = float(value)
+        elif name == "volume-ratio":
+            self.volume_ratio = float(value)
+        else:
+            super().set_prop(name, value)
 
     def __getstate__(self) -> dict:
         return {**super().__getstate__(), **dict(
@@ -679,33 +712,27 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
                 nonlocal depth
 
                 try:
-                    path = self.path[1:]
-                    if path[:len(secret)] != secret:
+                    url = urlparse(self.path)
+                    print(url)
+                    if url.path != f"/{secret}":
                         self.send_response(401)
                         self.end_headers()
                         self.wfile.write(f"Not authorized".encode("utf-8"))
                         return
 
-                    path = path[len(secret):]
-                    key, value = path.split("=")
+                    params = parse_qs(url.query)
+                    if len(params) != 1:
+                        raise ValueError(f"Only a single parameter accepted: {params}")
+
+                    (key, value), = params.items()
+                    if len(value) != 1:
+                        raise ValueError(f"Only a single parameter value accepted: {value}")
+                    value = value[0]
 
                     if key == "depth":
                         depth = int(value)
-                    elif key == "bounds":
-                        guide.set_bounds(s2l(value))
-                    elif key == "snap-threshold":
-                        guide.snap_threshold = float(value)
-                    elif key == "rescale":
-                        guide.rescale = bool(value)
-                    elif isinstance(guide, CurvatureGuide):
-                        if key == "nan-threshold":
-                            guide.nan_threshold = float(value)
-                        elif key == "volume-ratio":
-                            guide.volume_ratio = float(value)
-                        else:
-                            raise KeyError(f"Unknown key for CurvatureGuide {repr(key)}")
                     else:
-                        raise KeyError(f"Unknown key {repr(key)}")
+                        guide.set_prop(key, value)
 
                     self.send_response(200)
                     self.end_headers()
@@ -727,7 +754,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
                     continue
             else:
                 break
-        v(f"Listening for localhost:{port} secret {secret}", important=True)
+        v(f"Listening for localhost:{port}/{secret}", important=True)
 
     if save not in (None, False):
         if save is True:
