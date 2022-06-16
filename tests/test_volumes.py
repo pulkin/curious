@@ -3,7 +3,7 @@ from unittest import TestCase
 import numpy
 from numpy import testing
 
-from cutil import simplex_volumes as sv, simplex_volumes_n as svn, __file__
+from cutil import simplex_volumes as sv, simplex_volumes_n as svn
 
 
 def simplex_volumes(a, b):

@@ -23,10 +23,6 @@ import random
 import string
 
 
-FLAG_PENDING = 0
-FLAG_RUNNING = 1
-FLAG_DONE = 2
-
 MIN_PORT = 9911
 MAX_PORT = 9926
 
@@ -57,45 +53,234 @@ class DSTub1D:
         self.vertex_neighbor_vertices = neighbours_ptr, neighbours
 
 
-class Guide(Iterable):
-    def __init__(self, dims, dims_f=1, points=None, snap_threshold=None, default_value=0, default_flag=FLAG_PENDING,
-                 priority_tolerance=None, meta=None, rescale=True):
+class Sampling:
+    def __init__(self, dims, dims_f, data=None, proximity_epsilon=1e-8):
         """
-        Guides the sampling.
+        Sampling of multidimensional space.
 
         Args:
             dims (int): the dimensionality of the parameter space to sample;
             dims_f (int): the dimensionality of the output (target space);
-            points (Iterable): data points;
-            snap_threshold (float): a threshold to snap to triangle/simplex faces;
-            default_value (float): default value to assign to input points;
-            default_flag (float): default flag to assign to input points;
-            priority_tolerance (float): expected tolerance of priority values;
-            meta (Iterable): additional metadata to store alongside each point;
-            rescale (bool): if True, rescales parameter ranges to a unit box before triangulating;
+            data (list): initial list of points;
+            proximity_epsilon (float): the size of the dead area around a specific point;
         """
+        dtype = np.dtype([
+            ('x', np.float_, (dims,)),
+            ('y', np.float_, (dims_f,)),
+            ('tag', np.unicode_, 1),
+            ('meta', object, 1),
+        ])
+        if data is None:
+            self.data = np.empty(0, dtype)
+        else:
+            self.data = np.asanyarray([tuple(i) for i in data], dtype)
         self.dims = dims
         self.dims_f = dims_f
-        if points is None:
-            self.data = np.empty((0, dims + dims_f + 1), dtype=float)
-            self.data_meta = np.empty(0, dtype=object)
-        else:
-            points = np.array(tuple(points))
-            self.data = np.zeros((len(points), dims + dims_f + 1), dtype=float)
-            self.data_meta = np.full(len(points), None, dtype=object)
-            self.values[:] = default_value
-            self.flags[:] = default_flag
-            self.data[:, :points.shape[1]] = points
-            if meta is not None:
-                self.data_meta[:] = meta
-        self.snap_threshold = snap_threshold
-        self.default_value = default_value
-        if priority_tolerance is None:
-            self.priority_tolerance = 1e-9
-        else:
-            self.priority_tolerance = priority_tolerance
+        self.proximity_epsilon = proximity_epsilon
+
+    def __getstate__(self):
+        return {
+            "dims": self.dims,
+            "dims_f": self.dims_f,
+            "data": list((x.tolist(), y.tolist(), t, m) for x, y, t, m in self.data.tolist()),
+            "proximity_epsilon": self.proximity_epsilon,
+        }
+
+    def __setstate__(self, state):
+        self.__init__(**state)
+
+    def set_prop(self, name, value):
+        raise NotImplementedError
+
+    @property
+    def coordinates(self) -> np.ndarray:
+        return self.data["x"]
+
+    @property
+    def values(self) -> np.ndarray:
+        return self.data["y"]
+
+    @property
+    def tags(self) -> np.ndarray:
+        return self.data["tag"]
+
+    @property
+    def meta(self):
+        return self.data["meta"]
+
+    @property
+    def size(self):
+        return len(self.data)
+
+    def get_volumes(self) -> np.ndarray:
+        """Volumes of sampling units as a plain array."""
+        raise NotImplementedError
+
+    def get_curvature(self) -> np.ndarray:
+        """Curvature measure as a plain array."""
+        raise NotImplementedError
+
+    def get_limits(self) -> tuple:
+        """Computes a box with coordinate limits: min and max."""
+        coordinates = self.coordinates
+        return tuple(zip(
+            np.min(coordinates, axis=0),
+            np.max(coordinates, axis=0))
+        )
+
+    def append(self, x, y=None, tag="⏸", meta=None, ignore_duplicates=False):
+        """
+        Adds a point to sampling.
+
+        Args:
+            x (np.ndarray): point coordinate;
+            y (np.ndarray): point value;
+            tag (str): point tag;
+            meta: point metadata;
+            ignore_duplicates (bool): if True, ignores duplicates instead of raising error;
+        """
+        x = np.asanyarray(x, dtype=float)
+        if y is None:
+            y = np.full(self.dims_f, float("nan"), dtype=float)
+        p = np.asanyarray([(x, y, tag, meta)], self.data.dtype)
+        coordinates = self.coordinates
+        if len(coordinates) > 0:
+            delta = np.linalg.norm(coordinates - p["x"], axis=1)
+            if delta.min() < self.proximity_epsilon:
+                if ignore_duplicates:
+                    return
+                else:
+                    raise ValueError(f"point {p} duplicates another point")
+        self.data = np.concatenate([self.data, p])
+
+    def sample(self, i) -> list:
+        """
+        Sample a unit.
+
+        Args:
+            i (int): unit index;
+
+        Returns:
+            An integer array of new point indices.
+        """
+        raise NotImplementedError
+
+
+class SimplexSampling(Sampling):
+    def set_prop(self, name, value):
+        raise NotImplementedError
+
+    @property
+    def simplices(self):
+        raise NotImplementedError
+
+    def get_volumes(self) -> np.ndarray:
+        return simplex_volumes(self.coordinates, self.simplices)
+
+    def get_curvature(self) -> np.ndarray:
+        fns = []
+        for i in self.values.T:
+            fns.append(simplex_volumes_n(
+                np.concatenate((self.coordinates, i[:, np.newaxis]), axis=-1),
+                self.tri.simplices, *self.tri.vertex_neighbor_vertices,
+            ))
+        # TODO: do not take max here
+        return np.max(fns, axis=0)
+
+    def sample(self, i) -> list:
+        raise NotImplementedError
+
+
+class DelaunaySampling(SimplexSampling):
+    def __init__(self, *args, rescale=True, snap_threshold=None, **kwargs):
+        super().__init__(*args, **kwargs)
         self.rescale = rescale
-        self.tri = self.maybe_triangulate()
+        self.snap_threshold = snap_threshold
+        self.tri = None
+
+    def __getstate__(self) -> dict:
+        return dict(rescale=self.rescale, snap_threshold=self.snap_threshold, **super().__getstate__())
+
+    def set_prop(self, name, value):
+        """
+        Sets a property.
+
+        Args:
+            name (str): property name;
+            value (str): property value;
+        """
+        if name == "snap-threshold":
+            self.snap_threshold = float(value)
+        elif name == "rescale":
+            self.rescale = bool(value)
+        else:
+            raise KeyError(f"Unknown property to set {repr(name)}")
+
+    def maybe_triangulate(self):
+        """
+        Prepares a new triangulation.
+
+        Returns:
+            The new triangulation stored in `self.tri` or None if no
+            triangulation possible.
+        """
+        if self.size >= 2 ** self.dims:
+
+            if self.rescale:
+                coordinates_min = self.coordinates.min(axis=0)
+                coordinates_max = self.coordinates.max(axis=0)
+                coordinates = self.coordinates / ((coordinates_max - coordinates_min)[np.newaxis, :])
+            else:
+                coordinates = self.coordinates
+
+            if self.dims == 1:
+                self.tri = DSTub1D(coordinates)
+            else:
+                self.tri = Delaunay(coordinates, qhull_options='Qz')
+
+        else:
+            self.tri = None
+
+        return self.tri
+
+    @property
+    def simplices(self):
+        if self.tri is None:
+            raise RuntimeError("No triangulation available yet")
+        else:
+            return self.tri.simplices
+
+    def append(self, *args, **kwargs):
+        point = super().append(*args, **kwargs)
+        self.maybe_triangulate()
+        return point
+
+    def sample(self, i):
+        simplex = self.simplices[i]
+        coordinates = self.coordinates[simplex, :]
+        center = np.mean(coordinates, axis=0)
+        dst = np.linalg.norm(coordinates - center[np.newaxis, :], axis=-1)
+        max_dst = dst.max()
+        mask = np.asanyarray(dst > self.snap_threshold * max_dst, dtype=float)
+        if mask.sum() < 2:
+            mask[np.argsort(dst)[:-3:-1]] = .5
+        else:
+            mask /= mask.sum()
+        self.append(mask @ coordinates)
+        return [self.size - 1]
+
+
+class Guide(Iterable):
+    def __init__(self, sampler, priority_tolerance=1e-9):
+        """
+        Guides the sampling.
+
+        Args:
+            sampler (Sampling): sampling to use;
+            priority_tolerance (float): expected tolerance of priority values;
+        """
+        self.sampler = sampler
+        self.priority_tolerance = priority_tolerance
 
     def set_bounds(self, bounds):
         """
@@ -105,21 +290,7 @@ class Guide(Iterable):
             bounds (tuple): bounds defining the box;
         """
         for i in product(*bounds):
-            self.maybe_add(*i, strict=False)
-
-    @classmethod
-    def from_bounds(cls, bounds, **kwargs):
-        """
-        Constructs a guide starting from multidimensional box bounds.
-
-        Args:
-            bounds (tuple): bounds defining the box;
-            **kwargs: keyword arguments to constructor;
-
-        Returns:
-            A new guide.
-        """
-        return cls(len(bounds), points=product(*bounds), **kwargs)
+            self.sampler.append(i, ignore_duplicates=True)
 
     def set_prop(self, name, value):
         """
@@ -131,31 +302,14 @@ class Guide(Iterable):
         """
         if name == "bounds":
             self.set_bounds(s2r(value))
-        elif name == "snap-threshold":
-            self.snap_threshold = float(value)
-        elif name == "rescale":
-            self.rescale = bool(value)
         else:
-            raise KeyError(f"Unknown property to set {repr(name)}")
-
-    @property
-    def coordinates(self) -> np.ndarray:
-        return self.data[:, :self.dims]
-
-    @property
-    def values(self) -> np.ndarray:
-        return self.data[:, self.dims:self.dims + self.dims_f]
-
-    @property
-    def flags(self) -> np.ndarray:
-        return self.data[:, -1]
+            self.sampler.set_prop(name, value)
 
     def __getstate__(self) -> dict:
-        return dict(dims=self.dims, dims_f=self.dims_f, points=self.data.tolist(), snap_threshold=self.snap_threshold,
-                    default_value=self.default_value, priority_tolerance=self.priority_tolerance,
-                    meta=self.data_meta.tolist(), rescale=self.rescale)
+        return dict(sampler=self.sampler.__getstate__(), priority_tolerance=self.priority_tolerance)
 
     def __setstate__(self, state):
+        state["sampler"] = DelaunaySampling(**state["sampler"])
         self.__init__(**state)
 
     def to_json(self):
@@ -193,101 +347,37 @@ class Guide(Iterable):
         Returns:
             A new Guide.
         """
+        data["sampler"] = DelaunaySampling(**data["sampler"])
         return cls(**data)
 
     @property
     def m_pending(self) -> np.ndarray:
         """Mask with points having 'pending' status."""
-        return np.where(self.flags == FLAG_PENDING)[0]
+        return np.where(self.sampler.tags == "⏸")[0]
 
     @property
     def m_running(self) -> np.ndarray:
         """Indices of points with 'running' status."""
-        return np.where(self.flags == FLAG_RUNNING)[0]
+        return np.where(self.sampler.tags == "▶")[0]
 
     @property
     def m_done(self) -> np.ndarray:
         """Indices of points with 'done' status."""
-        return np.where(self.flags == FLAG_DONE)[0]
+        return np.where(self.sampler.tags == "✓")[0]
 
     @property
     def __any_nan_mask__(self) -> np.ndarray:
-        return np.any(np.isnan(self.values), axis=-1)
+        return np.any(np.isnan(self.sampler.values), axis=-1)
 
     @property
     def m_done_numeric(self) -> np.ndarray:
         """Indices of points with numeric results."""
-        return np.where((self.flags == FLAG_DONE) * (np.logical_not(self.__any_nan_mask__)))[0]
+        return np.where((self.sampler.tags == "✓") * (np.logical_not(self.__any_nan_mask__)))[0]
 
     @property
     def m_done_nan(self) -> np.ndarray:
         """Indices ofpoints with non-numeric results."""
-        return np.where((self.flags == FLAG_DONE) * self.__any_nan_mask__)[0]
-
-    def maybe_triangulate(self):
-        """
-        Prepares a new triangulation.
-
-        Returns:
-            Tbe new triangulation stored in `self.tri` or None if no
-            triangulation possible.
-        """
-        if len(self.data) >= 2 ** self.dims:
-
-            if self.rescale:
-                coordinates_min = self.coordinates.min(axis=0)
-                coordinates_max = self.coordinates.max(axis=0)
-                coordinates = self.coordinates / ((coordinates_max - coordinates_min)[np.newaxis, :])
-            else:
-                coordinates = self.coordinates
-
-            if self.dims == 1:
-                self.tri = DSTub1D(coordinates)
-            else:
-                self.tri = Delaunay(coordinates, qhull_options='Qz')
-
-        else:
-            self.tri = None
-        return self.tri
-
-    def maybe_add(self, *p, strict=False):
-        """
-        Adds a new point and triangulates.
-        Args:
-            p: the point to add;
-            strict (bool): raises an exception if the point is already present;
-
-        Returns:
-            The index of the point added.
-        """
-        if not self.dims <= len(p) <= self.dims + self.dims_f + 1:
-            raise ValueError("Wrong point data length {:d}, expected {:d} <= len(p) <= {:d}".format(
-                len(p), self.dims, self.dims + self.dims_f + 1))
-        point_location = np.array(p)[:self.dims]
-        delta = np.prod(self.coordinates == point_location[np.newaxis, :], axis=1)
-        if np.any(delta):
-            if strict:
-                raise ValueError(f"The point is already present in the guide.")
-            else:
-                return
-        new_value = (self.default_value,) * self.dims_f
-        new_flag = FLAG_PENDING,
-        new_data_row = new_value + new_flag
-        new_data_row = p + new_data_row[len(p) - self.dims:]
-        self.data = np.append(
-            self.data,
-            [new_data_row],
-            axis=0)
-        self.data_meta = np.append(self.data_meta, [None])
-        self.maybe_triangulate()
-        return len(self.data) - 1
-
-    def get_data_limits(self) -> tuple:
-        """Computes data limits."""
-        return tuple(zip(
-            np.min(self.coordinates, axis=0),
-            np.max(self.coordinates, axis=0))
-        )
+        return np.where((self.sampler.tags == "✓") * self.__any_nan_mask__)[0]
 
     def priority(self) -> np.ndarray:
         """
@@ -296,27 +386,6 @@ class Guide(Iterable):
             An array with priorities: arbitrary real numbers.
         """
         raise NotImplementedError
-
-    def __simplex_middle__(self, simplex) -> np.ndarray:
-        """
-        Pick a middle point inside a multidimensional simplex according to
-        the rules provided by this object.
-
-        Args:
-            simplex (numpy.array): simplex points;
-
-        Returns:
-            A center point in barycentric coordinates.
-        """
-        center = np.mean(simplex, axis=0)
-        dst = np.linalg.norm(simplex - center[np.newaxis, :], axis=-1)
-        max_dst = dst.max()
-        mask = np.asanyarray(dst > self.snap_threshold * max_dst, dtype=float)
-        if mask.sum() < 2:
-            mask[np.argsort(dst)[:-3:-1]] = .5
-        else:
-            mask /= mask.sum()
-        return mask
 
     def __choose_from_alternatives__(self, alternatives) -> int:
         """
@@ -330,30 +399,25 @@ class Guide(Iterable):
     def __next__(self):
         """Sample another point."""
         # First, pick points that are pending.
-        for i in self.m_pending:
-            self.flags[i] = FLAG_RUNNING
-            return i
+        new_points = self.m_pending
 
-        # Do nothing if not triangulated
-        if self.tri is None:
-            raise StopIteration
+        if len(new_points) == 0:
+            priority = self.priority()
 
-        priority = self.priority()
+            # nans in priority
+            nans = np.where(np.isnan(priority))[0]
+            if len(nans) > 0:
+                simplex = self.__choose_from_alternatives__(nans)
+            else:
+                # Largest volumes otherwise
+                max_priority = np.max(priority)
+                simplex = self.__choose_from_alternatives__(
+                    np.where(priority >= max_priority - self.priority_tolerance)[0])
+            new_points = self.sampler.sample(simplex)
 
-        # Second, nans
-        nans = np.where(np.isnan(priority))[0]
-        if len(nans) > 0:
-            simplex = self.__choose_from_alternatives__(nans)
-        else:
-            # Largest volumes otherwise
-            max_priority = np.max(priority)
-            simplex = self.__choose_from_alternatives__(
-                np.where(priority >= max_priority - self.priority_tolerance)[0])
-        simplex_coordinates = self.coordinates[self.tri.simplices[simplex], :]
-        center_bcc = self.__simplex_middle__(simplex_coordinates)
-        center_coordinate = center_bcc @ simplex_coordinates
-        stub_value = center_bcc @ self.values[self.tri.simplices[simplex], ...]
-        return self.maybe_add(*center_coordinate, *stub_value, FLAG_RUNNING, strict=True)
+        new_point = new_points[0]
+        self.sampler.tags[new_point] = "▶"
+        return new_point
 
     def __iter__(self):
         return self
@@ -370,15 +434,6 @@ class UniformGuide(Guide):
         """
         return alternatives[0]
 
-    def get_simplex_volumes(self) -> np.ndarray:
-        """
-        Computes simplex volumes.
-
-        Returns:
-            A plain array with volumes.
-        """
-        return simplex_volumes(self.coordinates, self.tri.simplices)
-
     def priority(self) -> np.ndarray:
         """
         Priority for sampling each of the triangles.
@@ -387,7 +442,7 @@ class UniformGuide(Guide):
         Returns:
             An array with priorities: arbitrary real numbers.
         """
-        return self.get_simplex_volumes()
+        return self.sampler.get_volumes()
 
 
 class CurvatureGuide(UniformGuide):
@@ -433,23 +488,7 @@ class CurvatureGuide(UniformGuide):
         Return:
             A single index of the simplex to sample.
         """
-        return alternatives[np.argmax(self.get_simplex_volumes()[alternatives])]
-
-    def get_curvature(self) -> np.ndarray:
-        """
-        Computes the multidimensional curvature as a simplex
-        volume.
-
-        Returns:
-            The curvature measure as a plain array.
-        """
-        fns = []
-        for i in self.values.T:
-            fns.append(simplex_volumes_n(
-                np.concatenate((self.coordinates, i[:, np.newaxis]), axis=-1),
-                self.tri.simplices, *self.tri.vertex_neighbor_vertices,
-            ))
-        return np.max(fns, axis=0)
+        return alternatives[np.argmax(self.sampler.get_volumes()[alternatives])]
 
     def priority(self) -> np.ndarray:
         """
@@ -460,15 +499,15 @@ class CurvatureGuide(UniformGuide):
         Returns:
             An array with priorities.
         """
-        result = self.get_curvature()
+        result = self.sampler.get_curvature()
 
         if self.nan_threshold is not None:
             if np.isnan(result).sum() > self.nan_threshold * len(result):
-                return self.get_simplex_volumes()
+                return self.sampler.get_volumes()
 
         if self.volume_ratio is not None:
-            volumes = self.get_simplex_volumes()
-            discard_mask = volumes / max(volumes) < 1./self.volume_ratio
+            volumes = self.sampler.get_volumes()
+            discard_mask = volumes / max(volumes) < 1. / self.volume_ratio
             result[discard_mask] = 0
 
         return result
@@ -529,6 +568,10 @@ class PointProcessPool:
         """The total count of completed plus running processes."""
         return self.running + self.completed
 
+    @property
+    def sampler(self):
+        return self.guide.sampler
+
     def __check_drain__(self):
         """
         Check conditions to enter drain mode.
@@ -562,7 +605,7 @@ class PointProcessPool:
         """
         if not self.draining:
             self.processes.append((p, subprocess.Popen(
-                (self.target,) + tuple(map("{:.12e}".format, self.guide.coordinates[p])),
+                (self.target,) + tuple(map("{:.12e}".format, self.guide.sampler.coordinates[p])),
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)
             )))
@@ -593,20 +636,20 @@ class PointProcessPool:
                 # Floats in the output
                 matches = tuple(i.group() for i in self.compiled_float_regex.finditer(out))
 
-                if len(matches) >= self.guide.dims_f:
-                    if self.guide.dims_f > 0:
-                        self.guide.values[point] = tuple(map(float, matches[-self.guide.dims_f:]))
+                if len(matches) >= self.sampler.dims_f:
+                    if self.sampler.dims_f > 0:
+                        self.sampler.values[point] = tuple(map(float, matches[-self.sampler.dims_f:]))
                     if not process.returncode or self.force_collect:
-                        self.guide.data_meta[point] = (out, err)
+                        self.sampler.meta[point] = (out, err)
                     if process.returncode:
                         self.__failed__ += 1
                     else:
                         self.__succeeded__ += 1
                 else:
-                    print("Missing {:d} numbers in the output".format(self.guide.dims_f))
+                    print("Missing {:d} numbers in the output".format(self.sampler.dims_f))
                     self.__failed__ += 1
 
-                self.guide.flags[point] = FLAG_DONE
+                self.sampler.tags[point] = "✓"
 
         for i in transaction:
             self.processes.remove(i)
@@ -698,19 +741,20 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
             guide = (UniformGuide if dims_f == 0 else CurvatureGuide).from_json(json.load(f))
         # Update the guide with the new parameters
         guide.set_bounds(bounds)
-        guide.snap_threshold = snap_threshold
-        if guide.dims_f != dims_f:
-            v(f"WARN Ignoring dims_f={dims_f}, using restored value {guide.dims_f}")
-        guide.rescale = rescale
+        guide.sampler.snap_threshold = snap_threshold
+        if guide.sampler.dims_f != dims_f:
+            v(f"WARN Ignoring dims_f={dims_f}, using the restored value {guide.dims_f}")
+        guide.sampler.rescale = rescale
         if isinstance(guide, CurvatureGuide):
             guide.nan_threshold = nan_threshold
             guide.volume_ratio = volume_ratio
     else:
+        sampler = DelaunaySampling(dims=len(bounds), dims_f=dims_f, rescale=rescale, snap_threshold=snap_threshold)
         if dims_f == 0:
-            guide = UniformGuide.from_bounds(bounds, snap_threshold=snap_threshold, dims_f=dims_f, rescale=rescale)
+            guide = UniformGuide(sampler, )
         else:
-            guide = CurvatureGuide.from_bounds(bounds, snap_threshold=snap_threshold, nan_threshold=nan_threshold,
-                                               volume_ratio=volume_ratio, dims_f=dims_f, rescale=rescale)
+            guide = CurvatureGuide(sampler, nan_threshold=nan_threshold, volume_ratio=volume_ratio)
+        guide.set_bounds(bounds)
 
     if web_server:
 
