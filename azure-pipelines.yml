@@ -25,7 +25,7 @@ stages:
       displayName: 'Test library'
 
     - script: |
-        sudo python3 setup.py install
+        python3 setup.py install --user
         CURIOUS_TEST_INSTALL=yes python3 -m unittest tests/test_script.py
       displayName: 'Test install'
 
