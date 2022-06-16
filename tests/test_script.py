@@ -32,10 +32,9 @@ class TestScript(TestCase):
             if fl is None:
                 raise ValueError("No argument followed by '--save'")
         else:
-            fl = tempfile.mkstemp(suffix=".json")[1]
-        executable = "curious.py" if "CURIOUS_TEST_INSTALL" in os.environ else this / ".." / "scripts" / "curious.py"
+            _, fl = tempfile.mkstemp(suffix=".json")
         p = subprocess.Popen(
-            (executable, this / "functions" / target, '--save', fl) + tuple(options),
+            ("python", "-m", "curious", this / "functions" / target, '--save', fl) + tuple(options),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         out, err = p.communicate()

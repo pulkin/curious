@@ -10,22 +10,19 @@ stages:
     steps:
     - checkout: self
 
-    - script: python3 -m pip install --upgrade pip setuptools wheel pytest
-      displayName: 'Install pip'
+    - script: |
+        python -m pip install --upgrade pip
+        pip install build
+      displayName: 'Install build system'
 
-    - script: python3 -m pip install -r requirements.txt
-      displayName: 'Install requirements'
-
-    - script: python3 setup.py build
+    - script: python -m build
       displayName: 'Build'
 
     - script: |
-        ln -s build/lib*/cutil.cpython*.so .
-        pytest tests/test_volumes.py
-      displayName: 'Test library'
+        pip install dist/*.whl
+      displayName: 'Install'
 
     - script: |
-        python3 setup.py install --user
-        CURIOUS_TEST_INSTALL=yes pytest tests/test_script.py
-      displayName: 'Test install'
-
+        pip install -r test-requirements.txt
+        pytest -v
+      displayName: 'Test'
