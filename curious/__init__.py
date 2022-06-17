@@ -730,7 +730,11 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
 
         force_collect (bool): if True, collects data for non-zero exit codes;
     """
-    logging.basicConfig(stream=sys.stdout, level=logging.INFO if verbose else logging.WARNING)
+    logging.basicConfig(
+        stream=sys.stdout, level=logging.INFO if verbose else logging.WARNING,
+        format="[%(levelname)s] %(asctime)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     logging.info("hello")
 
     if on_update is not None:
