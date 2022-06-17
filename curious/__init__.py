@@ -19,6 +19,7 @@ import time
 import signal
 import random
 import string
+import logging
 
 
 MIN_PORT = 9911
@@ -728,12 +729,8 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
 
         force_collect (bool): if True, collects data for non-zero exit codes;
     """
-
-    def v(text, important=False):
-        if verbose or important:
-            print(f"[{timestamp()}] {text}", flush=True)
-
-    v("hello")
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO if verbose else logging.WARNING)
+    logging.info("hello")
 
     if on_update is not None:
         def on_plot_update_fun(guide):
@@ -742,20 +739,20 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
                 p.stdin.write(json.dumps(guide.to_json()))
                 p.stdin.close()
             except BrokenPipeError:
-                v("WARN on_update process refused to receive JSON data", important=True)
+                logging.warning("on_update process refused to receive JSON data")
     else:
         def on_plot_update_fun(guide):
             pass
 
     if load is not None:
-        v(f"Loading from '{load}' ...")
+        logging.info(f"loading from '{load}' ...")
         with open(load, 'r') as f:
             guide = (UniformGuide if dims_f == 0 else CurvatureGuide).from_json(json.load(f))
         # Update the guide with the new parameters
         guide.set_bounds(bounds)
         guide.sampler.snap_threshold = snap_threshold
         if guide.sampler.dims_f != dims_f:
-            v(f"WARN Ignoring dims_f={dims_f}, using the restored value {guide.dims_f}")
+            logging.warning(f"ignoring dims_f={dims_f}, using the restored value {guide.dims_f} instead")
         guide.sampler.rescale = rescale
         if isinstance(guide, CurvatureGuide):
             guide.nan_threshold = nan_threshold
@@ -817,7 +814,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
                     continue
             else:
                 break
-        v(f"Listening for localhost:{port}/{secret}", important=True)
+        logging.critical(f"listening for localhost:{port}/{secret}")
 
     if save not in (None, False):
         if save is True:
@@ -828,7 +825,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
             data_folder = save.parent
 
         if not data_folder.exists():
-            v(f"Creating data folder '{data_folder}' ...")
+            logging.info(f"creating data folder '{data_folder}' ...")
             os.mkdir(data_folder)
 
         if not data_folder.is_dir():
@@ -857,7 +854,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
                     break
 
             if swept or spawned:
-                v(f"Running: {ppp.running} (+{spawned} -{swept}) \tcompleted: {ppp.completed}[{len(guide.m_done)}] "
+                logging.info(f"running: {ppp.running} (+{spawned} -{swept}) \tcompleted: {ppp.completed}[{len(guide.m_done)}] "
                   f"({ppp.failed} fails) \t{'DRAIN' if ppp.draining else ''}")
                 on_plot_update_fun(guide)
                 if save:
@@ -869,9 +866,9 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
             if ppp.draining:
                 raise
             else:
-                v("Ctrl-C caught: finalizing ...", important=True)
+                logging.critical("ctrl-c caught: finalizing ... (press ctrl-c once more to abort now)")
                 ppp.start_drain()
 
-    v("bye")
+    logging.info("bye")
 
     return ppp.failed > ppp.fail_limit
