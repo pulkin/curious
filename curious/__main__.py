@@ -1,62 +1,9 @@
 from . import run
+from .util import limit2str, str2ranges, str2limit
 
 import argparse
 import inspect
 from datetime import timedelta, datetime
-
-
-def l2s(limit) -> str:
-    """
-    Converts limit into string.
-    Args:
-        limit (str, timedelta, None): the limit;
-
-    Returns:
-        A string representing the limit.
-    """
-    if isinstance(limit, timedelta):
-        return "time:{}".format(str(limit))
-    elif isinstance(limit, int):
-        return "eval:{:d}".format(limit)
-    elif limit is None:
-        return "none"
-    else:
-        raise ValueError("Unknown limit object: {}".format(limit))
-
-
-def s2l(limit):
-    """
-    Converts string into limit.
-    Args:
-        limit (str): a string with the limit;
-
-    Returns:
-        A limit.
-    """
-    if limit.startswith("time:"):
-        t = datetime.strptime(limit[5:], "%H:%M:%S")
-        return timedelta(hours=t.hour, minutes=t.minute, seconds=t.second)
-    elif limit.startswith("eval:"):
-        return int(limit[5:])
-    elif limit == 'none':
-        return None
-    else:
-        raise ValueError("Unknown limit: {}".format(limit))
-
-
-def s2r(ranges):
-    """
-    Converts string into ranges.
-    Args:
-        ranges (str): a string representation of ranges;
-
-    Returns:
-        A nested tuple with ranges.
-    """
-    return tuple(
-        tuple(float(j) for j in i.strip().split(" "))
-        for i in ranges.split(",")
-    )
 
 
 spec = inspect.getfullargspec(run)
@@ -75,7 +22,7 @@ parser.add_argument("-f", "--fail-limit", help="the maximal number of failures b
 parser.add_argument("-l", "--limit", help="the stop condition: 'none' (runs infinitely), "
                                           "'time:DD:HH:MM:SS' (time limit), "
                                           "'eval:N' (the total number of evaluations)",
-                    metavar="LIMIT", type=str, default=l2s(defaults["limit"]))
+                    metavar="LIMIT", type=str, default=limit2str(defaults["limit"]))
 parser.add_argument("--snap-threshold", help="a threshold to snap points to faces", metavar="FLOAT", type=float,
                     default=defaults["snap_threshold"])
 parser.add_argument("--nan-threshold", help="a critical ratio of nans to fallback to uniform sampling",
@@ -96,12 +43,12 @@ options = parser.parse_args()
 
 exit(run(
     target=options.target,
-    bounds=s2r(options.ranges),
+    bounds=str2ranges(options.ranges),
     dims_f=options.n,
     verbose=options.verbose,
     depth=options.depth,
     fail_limit=options.fail_limit,
-    limit=s2l(options.limit),
+    limit=str2limit(options.limit),
     snap_threshold=options.snap_threshold,
     nan_threshold=options.nan_threshold,
     volume_ratio=options.volume_ratio,

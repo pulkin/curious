@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-from cutil import simplex_volumes, simplex_volumes_n
+from .cutil import simplex_volumes, simplex_volumes_n
+from .util import str2ranges
 
 import numpy as np
 from scipy.spatial import Delaunay
@@ -314,7 +315,7 @@ class Guide(Iterable):
             value (str): property value;
         """
         if name == "bounds":
-            self.set_bounds(s2r(value))
+            self.set_bounds(str2ranges(value))
         else:
             self.sampler.set_prop(name, value)
 

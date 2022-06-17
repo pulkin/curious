@@ -19,5 +19,5 @@ setup(
     long_description=open('README.md').read(),
     long_description_content_type="text/markdown",
     install_requires=requirements,
-    ext_modules=[Extension('cutil', sources=['c/cutil.c'], include_dirs=[numpy.get_include()])],
+    ext_modules=[Extension('curious.cutil', sources=['c/cutil.c'], include_dirs=[numpy.get_include()])],
 )
