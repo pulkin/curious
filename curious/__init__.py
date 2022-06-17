@@ -52,7 +52,7 @@ class DSTub1D:
 
 
 class Sampling:
-    def __init__(self, dims, dims_f, data=None, proximity_epsilon=1e-8):
+    def __init__(self, dims, dims_f, data=None):
         """
         Sampling of multidimensional space.
 
@@ -60,7 +60,6 @@ class Sampling:
             dims (int): the dimensionality of the parameter space to sample;
             dims_f (int): the dimensionality of the output (target space);
             data (list): initial list of points;
-            proximity_epsilon (float): the size of the dead area around a specific point;
         """
         dtype = np.dtype([
             ('x', np.float_, (dims,)),
@@ -74,14 +73,12 @@ class Sampling:
             self.data = np.asanyarray([tuple(i) for i in data], dtype)
         self.dims = dims
         self.dims_f = dims_f
-        self.proximity_epsilon = proximity_epsilon
 
     def __getstate__(self):
         return {
             "dims": self.dims,
             "dims_f": self.dims_f,
             "data": list((x.tolist(), y.tolist(), t, m) for x, y, t, m in self.data.tolist()),
-            "proximity_epsilon": self.proximity_epsilon,
         }
 
     def __setstate__(self, state):
@@ -110,6 +107,9 @@ class Sampling:
     def size(self):
         return len(self.data)
 
+    def __len__(self):
+        return self.size
+
     def get_volumes(self) -> np.ndarray:
         """Volumes of sampling units as a plain array."""
         raise NotImplementedError
@@ -126,7 +126,22 @@ class Sampling:
             np.max(coordinates, axis=0))
         )
 
-    def append(self, x, y=None, tag="⏸", meta=None, ignore_duplicates=False):
+    def closest(self, x) -> float:
+        """
+        Distance to the closest point in sampling.
+
+        Args:
+            x (np.ndarray): the point to compute distance to;
+
+        Returns:
+            The distance.
+        """
+        if self.size == 0:
+            return float("+inf")
+        x = np.array(x, dtype=float)
+        return np.linalg.norm(self.coordinates - x[None, :], axis=1).min()
+    
+    def append(self, x, y=None, tag="⏸", meta=None):
         """
         Adds a point to sampling.
 
@@ -135,20 +150,11 @@ class Sampling:
             y (np.ndarray): point value;
             tag (str): point tag;
             meta: point metadata;
-            ignore_duplicates (bool): if True, ignores duplicates instead of raising error;
         """
         x = np.asanyarray(x, dtype=float)
         if y is None:
             y = np.full(self.dims_f, float("nan"), dtype=float)
         p = np.asanyarray([(x, y, tag, meta)], self.data.dtype)
-        coordinates = self.coordinates
-        if len(coordinates) > 0:
-            delta = np.linalg.norm(coordinates - p["x"], axis=1)
-            if delta.min() < self.proximity_epsilon:
-                if ignore_duplicates:
-                    return
-                else:
-                    raise ValueError(f"point {p} duplicates another point")
         self.data = np.concatenate([self.data, p])
 
     def sample(self, i) -> list:
@@ -190,10 +196,11 @@ class SimplexSampling(Sampling):
 
 
 class DelaunaySampling(SimplexSampling):
-    def __init__(self, *args, rescale=True, snap_threshold=None, **kwargs):
+    def __init__(self, *args, rescale=True, snap_threshold=None, proximity_epsilon=1e-8, **kwargs):
         super().__init__(*args, **kwargs)
         self.rescale = rescale
         self.snap_threshold = snap_threshold
+        self.proximity_epsilon = proximity_epsilon
         self.tri = None
 
     def __getstate__(self) -> dict:
@@ -248,8 +255,15 @@ class DelaunaySampling(SimplexSampling):
         else:
             return self.tri.simplices
 
-    def append(self, *args, **kwargs):
-        point = super().append(*args, **kwargs)
+    def append(self, x, **kwargs):
+        ignore_duplicates = kwargs.pop("ignore_duplicates", False)
+        if self.closest(x) < self.proximity_epsilon:
+            if ignore_duplicates:
+                return
+            else:
+                raise ValueError(f"point {x} duplicates another point")
+
+        point = super().append(x, **kwargs)
         self.maybe_triangulate()
         return point
 
