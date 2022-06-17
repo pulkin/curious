@@ -13,7 +13,7 @@ setup(
     author='curious contributors',
     author_email='gpulkin@gmail.com',
     url='https://github.com/pulkin/curious',
-    packages=find_packages(),
+    packages=find_packages(exclude=("tests",)),
     data_files=["requirements.txt"],
     description='Feature-driven function sampling',
     long_description=open('README.md').read(),
