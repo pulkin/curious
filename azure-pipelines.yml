@@ -24,5 +24,6 @@ stages:
 
     - script: |
         pip install -r test-requirements.txt
-        pytest -v tests
+        cd tests
+        pytest -v .
       displayName: 'Test'
