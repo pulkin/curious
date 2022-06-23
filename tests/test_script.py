@@ -1,11 +1,11 @@
-from unittest import TestCase
+from curious.util import load
 
+from unittest import TestCase
 import sys
 import os
 from pathlib import Path
 import subprocess
 import tempfile
-import json
 import numpy
 import time
 from copy import deepcopy
@@ -55,14 +55,13 @@ class TestScript(TestCase):
                 self.assertEqual(err, "")
 
         with open(fl, 'r') as f:
-            return json.load(f)
+            return load(f)
 
     def test_lim_case_0(self):
         _x1 = 1. / abs(2.**.5 - 0.5 - 0.1j) ** 2
         _x2 = 1. / abs(2.**.5 / 3 - 0.5 - 0.1j) ** 2 - 1./9
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5')
-        self.assertEqual(data["sampler"]["dims"], 2)
-        assert_close_points(data["sampler"]["data"], [
+        assert_close_points(data["sampler"]["points"], [
             [[-1.0, -1.0], [_x1 + 1], "✓"], [[-1.0, 1.0], [_x1 - 1], "✓"],
             [[1.0, -1.0], [_x1 - 1], "✓"], [[1.0, 1.0], [_x1 + 1], "✓"],
             [[-1./3, 1./3], [_x2], "✓"],
@@ -73,8 +72,7 @@ class TestScript(TestCase):
 
     def test_lim_case_1(self):
         data = self.run_curious("1_2d_step.py", '-1 1, -1 1', '-l', 'eval:5')
-        self.assertEqual(data["sampler"]["dims"], 2)
-        assert_close_points(data["sampler"]["data"], [
+        assert_close_points(data["sampler"]["points"], [
             [[-1.0, -1.0], [-1.0], "✓"], [[-1.0, 1.0], [1.0], "✓"],
             [[1.0, -1.0], [-1.0], "✓"], [[1.0, 1.0], [1.0], "✓"],
             [[-1./3, 1./3], [-3.**.5 / 2 + 1], "✓"],
@@ -85,8 +83,7 @@ class TestScript(TestCase):
 
     def test_lim_case_2(self):
         data = self.run_curious("2_2d_divergence.py", '-1 1, -1 1', '-l', 'eval:5')
-        self.assertEqual(data["sampler"]["dims"], 2)
-        assert_close_points(data["sampler"]["data"], [
+        assert_close_points(data["sampler"]["points"], [
             [[-1.0, -1.0], [-2.0], "✓"], [[-1.0, 1.0], [0.0], "✓"],
             [[1.0, -1.0], [0.0], "✓"], [[1.0, 1.0], [2.0], "✓"],
             [[-1./3, 1./3], [0.0], "✓"],
@@ -97,8 +94,7 @@ class TestScript(TestCase):
 
     def test_lim_case_4(self):
         data = self.run_curious("4_1d_gaussian.py", '0 1', '-l', 'eval:5')
-        self.assertEqual(data["sampler"]["dims"], 1)
-        assert_close_points(data["sampler"]["data"], [
+        assert_close_points(data["sampler"]["points"], [
             [[0.0], [1.0], "✓"], [[1.0], [numpy.exp(-1)], "✓"],
             [[0.5], [numpy.exp(-0.25)], "✓"], [[0.25], [numpy.exp(-1./16)], "✓"],
             [[0.375], [numpy.exp(-0.375 ** 2)], "✓"],
@@ -109,8 +105,7 @@ class TestScript(TestCase):
 
     def test_lim_eval(self):
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:30')
-        self.assertEqual(data["sampler"]["dims"], 2)
-        self.assertEqual(numpy.array(data["sampler"]["data"]).shape, (30, 4))
+        self.assertEqual(data["sampler"]["points"].shape, (30,))
         self.assertEqual(data["sampler"]["snap_threshold"], 0.5)
         self.assertEqual(data["nan_threshold"], 0.5)
         self.assertEqual(data["volume_ratio"], 10)
@@ -119,8 +114,7 @@ class TestScript(TestCase):
         t = time.time()
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'time:00:00:05')
         t = time.time() - t
-        self.assertEqual(data["sampler"]["dims"], 2)
-        self.assertEqual(numpy.array(data["sampler"]["data"]).shape[1], 4)
+        self.assertEqual(len(data["sampler"]["points"].dtype.names), 4)
         self.assertEqual(data["sampler"]["snap_threshold"], 0.5)
         self.assertEqual(data["nan_threshold"], 0.5)
         self.assertEqual(data["volume_ratio"], 10)
@@ -132,8 +126,7 @@ class TestScript(TestCase):
         _x2 = 1. / abs(2.**.5 / 3 - 0.5 - 0.1j) ** 2 - 1./9
         _x3 = 1. / abs(26.**.5 / 9 - 0.5 - 0.1j) ** 2 + 5./81
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:6', "--depth", "2")
-        self.assertEqual(data["sampler"]["dims"], 2)
-        assert_close_points(data["sampler"]["data"], [
+        assert_close_points(data["sampler"]["points"], [
             [[-1.0, -1.0], [_x1 + 1], "✓"], [[-1.0, 1.0], [_x1 - 1], "✓"],
             [[1.0, -1.0], [_x1 - 1], "✓"], [[1.0, 1.0], [_x1 + 1], "✓"],
             [[-1./3, 1./3], [_x2], "✓"], [[-1./9, -5./9], [_x3], "✓"],
@@ -146,8 +139,7 @@ class TestScript(TestCase):
         with self.assertRaises(RuntimeError):
             self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:1')
         data = self.run_curious("3_exit_code.py", '-1 1, -1 1', '-l', 'eval:5', "--fail-limit", "5")
-        self.assertEqual(data["sampler"]["dims"], 2)
-        assert_close_points(data["sampler"]["data"], [
+        assert_close_points(data["sampler"]["points"], [
             [[-1.0, -1.0], [float("nan")], "✓"], [[-1.0, 1.0], [float("nan")], "✓"],
             [[1.0, -1.0], [float("nan")], "✓"], [[1.0, 1.0], [float("nan")], "✓"],
             [[-1./3, 1./3], [float("nan")], "✓"],
@@ -169,22 +161,26 @@ class TestScript(TestCase):
     def test_restart(self):
         fl = tempfile.mkstemp(suffix=".json")[1]
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1', '-l', 'eval:5', "--save", fl)
-        self.assertEqual(numpy.array(data["sampler"]["data"]).shape, (5, 4))
+        self.assertEqual(numpy.array(data["sampler"]["points"]).shape, (5,))
+        self.assertEqual(len(numpy.array(data["sampler"]["points"]).dtype.names), 4)
         data_new = self.run_curious("0_nd_circle_feature.py", '-1 2, -1 1', '-l', 'eval:5', '--load', fl, '--save', fl,
                                     "--snap-threshold", "0.1", "--no-rescale", "--nan-threshold", "0.1",
                                     "--volume-ratio", "30")
 
-        self.assertEqual(numpy.array(data_new["sampler"]["data"]).shape, (10, 4))
+        self.assertEqual(numpy.array(data_new["sampler"]["points"]).shape, (10,))
+        self.assertEqual(len(numpy.array(data_new["sampler"]["points"]).dtype.names), 4)
 
+        numpy.testing.assert_equal(data_new["sampler"]["points"][:5], data["sampler"]["points"])
+        del data["sampler"]["points"]
         data_test = deepcopy(data_new)
-        data_test["sampler"]["data"] = data_test["sampler"]["data"][:5]
+        del data_test["sampler"]["points"]
         data_test["sampler"]["snap_threshold"] = 0.5
         data_test["sampler"]["rescale"] = True
         data_test["nan_threshold"] = 0.5
         data_test["volume_ratio"] = 10
         self.assertEqual(data, data_test)
 
-        point_coordinates = numpy.array([i[0] for i in data_new["sampler"]["data"]])
+        point_coordinates = numpy.array([i[0] for i in data_new["sampler"]["points"]])
         d = numpy.linalg.norm(point_coordinates - [[2, -1]], axis=-1)
         self.assertEqual((d == 0).sum(), 1)
 
@@ -198,7 +194,7 @@ class TestScript(TestCase):
 
     def test_4d(self):
         data = self.run_curious("0_nd_circle_feature.py", '-1 1, -1 1, -1 1, -1 1', '-l', 'eval:16')
-        self.assertEqual(len(data["sampler"]["data"]), 16)
+        self.assertEqual(len(data["sampler"]["points"]), 16)
 
     def test_two_component(self):
         def f1(x):
@@ -208,9 +204,7 @@ class TestScript(TestCase):
             return numpy.exp(-(x + 0.5) ** 2) / 2
 
         data = self.run_curious("5_1d_2d_gaussian.py", '-1 1', '-l', 'eval:5', '-n', '2')
-        self.assertEqual(data["sampler"]["dims"], 1)
-        self.assertEqual(data["sampler"]["dims_f"], 2)
-        assert_close_points(data["sampler"]["data"], [
+        assert_close_points(data["sampler"]["points"], [
             ([-1], [f1(-1), f2(-1)], "✓"),
             ([1], [f1(1), f2(1)], "✓"),
             ([0], [f1(0), f2(0)], "✓"),

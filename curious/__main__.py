@@ -3,7 +3,6 @@ from .util import limit2str, str2ranges, str2limit
 
 import argparse
 import inspect
-from datetime import timedelta, datetime
 
 
 spec = inspect.getfullargspec(run)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from .cutil import simplex_volumes, simplex_volumes_n
-from .util import str2ranges
+from .util import str2ranges, dump, dumps, load as json_load
+from .attrs import check_point_data
 
 import numpy as np
 from scipy.spatial import Delaunay
@@ -15,12 +16,12 @@ import re
 import sys
 import os
 from pathlib import Path
-import json
 import time
 import signal
 import random
 import string
 import logging
+from attr import define, field, asdict
 
 
 MIN_PORT = 9911
@@ -53,61 +54,65 @@ class DSTub1D:
         self.vertex_neighbor_vertices = neighbours_ptr, neighbours
 
 
-class Sampling:
-    def __init__(self, dims, dims_f, data=None):
-        """
-        Sampling of multidimensional space.
+def point_record_dtype(dims, dims_f):
+    """
+    Creates a numpy record type to store point data.
 
-        Args:
-            dims (int): the dimensionality of the parameter space to sample;
-            dims_f (int): the dimensionality of the output (target space);
-            data (list): initial list of points;
-        """
-        dtype = np.dtype([
+    Args:
+        dims (int): the dimensionality of the parameter space to sample;
+        dims_f (int): the dimensionality of the output (target space);
+
+    Returns:
+        The resulting type.
+    """
+    return np.dtype([
             ('x', np.float_, (dims,)),
             ('y', np.float_, (dims_f,)),
             ('tag', np.unicode_, 1),
             ('meta', object, 1),
         ])
-        if data is None:
-            self.data = np.empty(0, dtype)
-        else:
-            self.data = np.asanyarray([tuple(i) for i in data], dtype)
-        self.dims = dims
-        self.dims_f = dims_f
 
-    def __getstate__(self):
-        return {
-            "dims": self.dims,
-            "dims_f": self.dims_f,
-            "data": list((x.tolist(), y.tolist(), t, m) for x, y, t, m in self.data.tolist()),
-        }
 
-    def __setstate__(self, state):
-        self.__init__(**state)
+@define
+class Sampling:
+    """
+    Sampling of multidimensional space.
+
+    Args:
+        data (np.ndarray): initial list of points;
+    """
+    points: np.ndarray = field(validator=lambda instance, attribute, value: check_point_data(value))
+
+    @property
+    def dims(self):
+        return self.points.dtype.fields["x"][0].shape[0]
+
+    @property
+    def dims_f(self):
+        return self.points.dtype.fields["y"][0].shape[0]
 
     def set_prop(self, name, value):
         raise NotImplementedError
 
     @property
     def coordinates(self) -> np.ndarray:
-        return self.data["x"]
+        return self.points["x"]
 
     @property
     def values(self) -> np.ndarray:
-        return self.data["y"]
+        return self.points["y"]
 
     @property
     def tags(self) -> np.ndarray:
-        return self.data["tag"]
+        return self.points["tag"]
 
     @property
     def meta(self):
-        return self.data["meta"]
+        return self.points["meta"]
 
     @property
     def size(self):
-        return len(self.data)
+        return len(self.points)
 
     def __len__(self):
         return self.size
@@ -156,8 +161,8 @@ class Sampling:
         x = np.asanyarray(x, dtype=float)
         if y is None:
             y = np.full(self.dims_f, float("nan"), dtype=float)
-        p = np.asanyarray([(x, y, tag, meta)], self.data.dtype)
-        self.data = np.concatenate([self.data, p])
+        p = np.asanyarray([(x, y, tag, meta)], self.points.dtype)
+        self.points = np.concatenate([self.points, p])
 
     def sample(self, i) -> list:
         """
@@ -172,6 +177,7 @@ class Sampling:
         raise NotImplementedError
 
 
+@define
 class SimplexSampling(Sampling):
     def set_prop(self, name, value):
         raise NotImplementedError
@@ -185,10 +191,11 @@ class SimplexSampling(Sampling):
 
     def get_curvature(self) -> np.ndarray:
         fns = []
+        tri = self.tri
         for i in self.values.T:
             fns.append(simplex_volumes_n(
                 np.concatenate((self.coordinates, i[:, np.newaxis]), axis=-1),
-                self.tri.simplices, *self.tri.vertex_neighbor_vertices,
+                tri.simplices, *tri.vertex_neighbor_vertices,
             ))
         # TODO: do not take max here
         return np.max(fns, axis=0)
@@ -197,16 +204,11 @@ class SimplexSampling(Sampling):
         raise NotImplementedError
 
 
+@define(auto_attribs=True)
 class DelaunaySampling(SimplexSampling):
-    def __init__(self, *args, rescale=True, snap_threshold=None, proximity_epsilon=1e-8, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.rescale = rescale
-        self.snap_threshold = snap_threshold
-        self.proximity_epsilon = proximity_epsilon
-        self.tri = None
-
-    def __getstate__(self) -> dict:
-        return dict(rescale=self.rescale, snap_threshold=self.snap_threshold, **super().__getstate__())
+    rescale: bool = True
+    snap_threshold: float = None
+    proximity_epsilon: float = 1e-8
 
     def set_prop(self, name, value):
         """
@@ -223,12 +225,13 @@ class DelaunaySampling(SimplexSampling):
         else:
             raise KeyError(f"Unknown property to set {repr(name)}")
 
-    def maybe_triangulate(self):
+    @property
+    def tri(self):
         """
         Prepares a new triangulation.
 
         Returns:
-            The new triangulation stored in `self.tri` or None if no
+            The new triangulation stored in `self._tri` or None if no
             triangulation possible.
         """
         if self.size >= 2 ** self.dims:
@@ -241,21 +244,17 @@ class DelaunaySampling(SimplexSampling):
                 coordinates = self.coordinates
 
             if self.dims == 1:
-                self.tri = DSTub1D(coordinates)
+                return DSTub1D(coordinates)
             else:
-                self.tri = Delaunay(coordinates, qhull_options='Qz')
-
-        else:
-            self.tri = None
-
-        return self.tri
+                return Delaunay(coordinates, qhull_options='Qz')
 
     @property
     def simplices(self):
-        if self.tri is None:
+        tri = self.tri
+        if tri is None:
             raise RuntimeError("No triangulation available yet")
         else:
-            return self.tri.simplices
+            return tri.simplices
 
     def append(self, x, **kwargs):
         ignore_duplicates = kwargs.pop("ignore_duplicates", False)
@@ -266,7 +265,6 @@ class DelaunaySampling(SimplexSampling):
                 raise ValueError(f"point {x} duplicates another point")
 
         point = super().append(x, **kwargs)
-        self.maybe_triangulate()
         return point
 
     def sample(self, i):
@@ -320,7 +318,7 @@ class Guide(Iterable):
             self.sampler.set_prop(name, value)
 
     def __getstate__(self) -> dict:
-        return dict(sampler=self.sampler.__getstate__(), priority_tolerance=self.priority_tolerance)
+        return dict(sampler=asdict(self.sampler), priority_tolerance=self.priority_tolerance)
 
     def __setstate__(self, state):
         state["sampler"] = DelaunaySampling(**state["sampler"])
@@ -346,9 +344,9 @@ class Guide(Iterable):
         def_kwargs.update(kwargs)
         if isinstance(f, (str, Path)):
             with open(f, 'w') as _f:
-                json.dump(self.to_json(), _f, **def_kwargs)
+                dump(self.to_json(), _f, **def_kwargs)
         else:
-            json.dump(self.to_json(), f, **def_kwargs)
+            dump(self.to_json(), f, **def_kwargs)
 
     @classmethod
     def from_json(cls, data):
@@ -731,7 +729,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
         force_collect (bool): if True, collects data for non-zero exit codes;
     """
     logging.basicConfig(
-        stream=sys.stdout, level=logging.INFO if verbose else logging.WARNING,
+        stream=sys.stdout, level=logging.DEBUG if verbose else logging.WARNING,
         format="[%(levelname)s] %(asctime)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
@@ -741,7 +739,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
         def on_plot_update_fun(guide):
             try:
                 p = subprocess.Popen(on_update, stdin=subprocess.PIPE, shell=True, encoding="utf-8")
-                p.stdin.write(json.dumps(guide.to_json()))
+                p.stdin.write(dumps(guide.to_json()))
                 p.stdin.close()
             except BrokenPipeError:
                 logging.warning("on_update process refused to receive JSON data")
@@ -752,7 +750,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
     if load is not None:
         logging.info(f"loading from '{load}' ...")
         with open(load, 'r') as f:
-            guide = (UniformGuide if dims_f == 0 else CurvatureGuide).from_json(json.load(f))
+            guide = (UniformGuide if dims_f == 0 else CurvatureGuide).from_json(json_load(f))
         # Update the guide with the new parameters
         guide.set_bounds(bounds)
         guide.sampler.snap_threshold = snap_threshold
@@ -763,9 +761,11 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
             guide.nan_threshold = nan_threshold
             guide.volume_ratio = volume_ratio
     else:
-        sampler = DelaunaySampling(dims=len(bounds), dims_f=dims_f, rescale=rescale, snap_threshold=snap_threshold)
+        sampler = DelaunaySampling(
+            np.empty((0,), dtype=point_record_dtype(len(bounds), dims_f)),
+            rescale=rescale, snap_threshold=snap_threshold)
         if dims_f == 0:
-            guide = UniformGuide(sampler, )
+            guide = UniformGuide(sampler)
         else:
             guide = CurvatureGuide(sampler, nan_threshold=nan_threshold, volume_ratio=volume_ratio)
         guide.set_bounds(bounds)
