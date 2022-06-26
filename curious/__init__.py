@@ -2,6 +2,7 @@
 from .cutil import simplex_volumes, simplex_volumes_n
 from .util import str2ranges, dump, dumps, load as json_load
 from .attrs import check_point_data
+from .data import point_record_dtype
 
 import numpy as np
 from scipy.spatial import Delaunay
@@ -21,11 +22,13 @@ import signal
 import random
 import string
 import logging
-from attr import define, field, asdict
+from attr import define, field, asdict, fields, filters
 
 
 MIN_PORT = 9911
 MAX_PORT = 9926
+DATA_LOG = 15
+logging.addLevelName(DATA_LOG, "DATA")
 
 
 class DSTub1D:
@@ -54,34 +57,32 @@ class DSTub1D:
         self.vertex_neighbor_vertices = neighbours_ptr, neighbours
 
 
-def point_record_dtype(dims, dims_f):
-    """
-    Creates a numpy record type to store point data.
-
-    Args:
-        dims (int): the dimensionality of the parameter space to sample;
-        dims_f (int): the dimensionality of the output (target space);
-
-    Returns:
-        The resulting type.
-    """
-    return np.dtype([
-            ('x', np.float_, (dims,)),
-            ('y', np.float_, (dims_f,)),
-            ('tag', np.unicode_, 1),
-            ('meta', object, 1),
-        ])
-
-
 @define
 class Sampling:
     """
     Sampling of multidimensional space.
 
     Args:
-        data (np.ndarray): initial list of points;
+        points (np.ndarray): initial list of points;
     """
     points: np.ndarray = field(validator=lambda instance, attribute, value: check_point_data(value))
+    logger: logging.Logger = None
+    runtime_parameters = tuple()
+
+    def __log_init_args__(self):
+        self.logger.log(DATA_LOG, f"  points={self.points.tolist()}")
+        self.logger.log(DATA_LOG, f"  dims={self.dims}")
+        self.logger.log(DATA_LOG, f"  dims_f={self.dims_f}")
+        for i in self.runtime_parameters:
+            val = getattr(self, i)
+            self.logger.info(f"  {i}={val}")
+
+    def __attrs_post_init__(self):
+        if self.logger is None:
+            self.logger = logging.getLogger(f"curious.{self.__class__.__name__}.0x{id(self):08x}")
+        self.logger.log(DATA_LOG, f"init")
+        self.__log_init_args__()
+        self.logger.log(DATA_LOG, "(end of init)")
 
     @property
     def dims(self):
@@ -147,7 +148,7 @@ class Sampling:
             return float("+inf")
         x = np.array(x, dtype=float)
         return np.linalg.norm(self.coordinates - x[None, :], axis=1).min()
-    
+
     def append(self, x, y=None, tag="⏸", meta=None):
         """
         Adds a point to sampling.
@@ -162,7 +163,21 @@ class Sampling:
         if y is None:
             y = np.full(self.dims_f, float("nan"), dtype=float)
         p = np.asanyarray([(x, y, tag, meta)], self.points.dtype)
+        self.logger.log(DATA_LOG, f"append: x={x.tolist()} y={y.tolist()} tag={tag} meta={meta}")
         self.points = np.concatenate([self.points, p])
+
+    def set(self, i, **kwargs):
+        """
+        Sets point values.
+
+        Args:
+            i (int): point index;
+            **kwargs: values to set;
+        """
+        for k, v in kwargs.items():
+            self.points[k][i] = v
+        kwargs_repr = ' '.join(f'{k}={v}' for k, v in kwargs.items())
+        self.logger.log(DATA_LOG, f"set {i}: {kwargs_repr}")
 
     def sample(self, i) -> list:
         """
@@ -209,6 +224,7 @@ class DelaunaySampling(SimplexSampling):
     rescale: bool = True
     snap_threshold: float = None
     proximity_epsilon: float = 1e-8
+    runtime_parameters = "rescale", "snap_threshold", "proximity_epsilon"
 
     def set_prop(self, name, value):
         """
@@ -318,7 +334,13 @@ class Guide(Iterable):
             self.sampler.set_prop(name, value)
 
     def __getstate__(self) -> dict:
-        return dict(sampler=asdict(self.sampler), priority_tolerance=self.priority_tolerance)
+        return dict(
+            sampler=asdict(
+                self.sampler,
+                filter=filters.exclude(fields(Sampling).logger)
+            ),
+            priority_tolerance=self.priority_tolerance,
+        )
 
     def __setstate__(self, state):
         state["sampler"] = DelaunaySampling(**state["sampler"])
@@ -649,10 +671,12 @@ class PointProcessPool:
                 matches = tuple(i.group() for i in self.compiled_float_regex.finditer(out))
 
                 if len(matches) >= self.sampler.dims_f:
+                    kwargs = {}
                     if self.sampler.dims_f > 0:
-                        self.sampler.values[point] = tuple(map(float, matches[-self.sampler.dims_f:]))
+                        kwargs["y"] = tuple(map(float, matches[-self.sampler.dims_f:]))
                     if not process.returncode or self.force_collect:
-                        self.sampler.meta[point] = (out, err)
+                        kwargs["meta"] = (out, err)
+                    self.sampler.set(point, **kwargs)
                     if process.returncode:
                         self.__failed__ += 1
                     else:
@@ -692,7 +716,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
         volume_ratio=10, rescale=True, save=True, load=None, on_update=None, web_server=False, force_collect=False):
     """
     Run curious.
-    
+
     Args:
         target (str): executable;
 
@@ -716,12 +740,12 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
         volume_ratio: the maximal ratio between the largest and the smallest simplex volume;
 
         rescale (bool): if True, rescales parameter ranges to a unit box before triangulating;
-        
+
         save (str, bool): the location of the JSON data file to save progress to. If True,
         prepares a new file name out of the timestamp;
-        
+
         load (str): the location of the JSON data file to load progress from;
-        
+
         on_update (str): executable to run on data updates;
 
         web_server (bool): creates a web server for runtime interaction;
@@ -730,7 +754,7 @@ def run(target, bounds, dims_f=1, verbose=False, depth=1, fail_limit=0, limit=No
     """
     logging.basicConfig(
         stream=sys.stdout, level=logging.DEBUG if verbose else logging.WARNING,
-        format="[%(levelname)s] %(asctime)s %(message)s",
+        format="[%(levelname)s] %(name)s %(asctime)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     logging.info("hello")
