@@ -22,7 +22,7 @@ import signal
 import random
 import string
 import logging
-from attr import define, field, asdict, fields, filters
+from attr import define, field, asdict, fields, filters, fields_dict
 
 
 MIN_PORT = 9911
@@ -67,15 +67,16 @@ class Sampling:
     """
     points: np.ndarray = field(validator=lambda instance, attribute, value: check_point_data(value))
     logger: logging.Logger = None
-    runtime_parameters = tuple()
 
     def __log_init_args__(self):
         self.logger.log(DATA_LOG, f"  points={self.points.tolist()}")
         self.logger.log(DATA_LOG, f"  dims={self.dims}")
         self.logger.log(DATA_LOG, f"  dims_f={self.dims_f}")
-        for i in self.runtime_parameters:
-            val = getattr(self, i)
-            self.logger.info(f"  {i}={val}")
+        other = asdict(self)
+        del other["points"]
+        del other["logger"]
+        for k, v in other.items():
+            self.logger.info(f"  {k}={v}")
 
     def __attrs_post_init__(self):
         if self.logger is None:
@@ -91,9 +92,6 @@ class Sampling:
     @property
     def dims_f(self):
         return self.points.dtype.fields["y"][0].shape[0]
-
-    def set_prop(self, name, value):
-        raise NotImplementedError
 
     @property
     def coordinates(self) -> np.ndarray:
@@ -179,6 +177,21 @@ class Sampling:
         kwargs_repr = ' '.join(f'{k}={v}' for k, v in kwargs.items())
         self.logger.log(DATA_LOG, f"set {i}: {kwargs_repr}")
 
+    def set_prop(self, name, value):
+        """
+        Sets a runtime-friendly property.
+
+        Args:
+            name (str): property name;
+            value (str): property value;
+        """
+        name = name.replace("-", "_")
+        f = fields_dict(type(self))[name]
+        if f.metadata.get("flexible", True) is not True:
+            raise ValueError(f"cannot set property {name}")
+        setattr(self, f.name, value)
+        self.logger.log(DATA_LOG, f"set_prop {name}={value}")
+
     def sample(self, i) -> list:
         """
         Sample a unit.
@@ -194,9 +207,6 @@ class Sampling:
 
 @define
 class SimplexSampling(Sampling):
-    def set_prop(self, name, value):
-        raise NotImplementedError
-
     @property
     def simplices(self):
         raise NotImplementedError
@@ -219,27 +229,11 @@ class SimplexSampling(Sampling):
         raise NotImplementedError
 
 
-@define(auto_attribs=True)
+@define
 class DelaunaySampling(SimplexSampling):
-    rescale: bool = True
-    snap_threshold: float = None
-    proximity_epsilon: float = 1e-8
-    runtime_parameters = "rescale", "snap_threshold", "proximity_epsilon"
-
-    def set_prop(self, name, value):
-        """
-        Sets a property.
-
-        Args:
-            name (str): property name;
-            value (str): property value;
-        """
-        if name == "snap-threshold":
-            self.snap_threshold = float(value)
-        elif name == "rescale":
-            self.rescale = bool(value)
-        else:
-            raise KeyError(f"Unknown property to set {repr(name)}")
+    rescale: bool = field(default=True, metadata={"flexible": True}, converter=bool)
+    snap_threshold: float = field(default=None, metadata={"flexible": True}, converter=float)
+    proximity_epsilon: float = field(default=1e-8, metadata={"flexible": True}, converter=float)
 
     @property
     def tri(self):
