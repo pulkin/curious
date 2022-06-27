@@ -1,4 +1,4 @@
 numpy
 scipy
 setuptools
-attrs
+attrs>=20.1.0
