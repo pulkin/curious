@@ -14,6 +14,15 @@ Install
 
 TBD
 
+Use
+---
+
+General usage info:
+
+```commandline
+python -m curious --help
+```
+
 Custom build
 ------------
 
